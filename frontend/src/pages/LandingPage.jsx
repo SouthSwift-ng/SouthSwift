@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { joinWaitlist } from '../utils/api';
 
+const SLACK_WEBHOOK = process.env.REACT_APP_SLACK_WEBHOOK_URL || '';
+
 const G    = '#1B4332';
 const GOLD = '#C8963C';
 const STATES = ['Lagos','Abuja','Rivers','Oyo','Kwara','Osun','Ekiti','Enugu','Kano','Kaduna','Ogun','Delta','Ondo','Kogi','Plateau'];
@@ -23,6 +25,26 @@ export default function LandingPage() {
     setLoading(true);
     try {
       await joinWaitlist(form);
+
+      // ── Slack notification ──────────────────────────────────────────
+      if (SLACK_WEBHOOK) {
+        fetch(SLACK_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: [
+              `🔔 *New SouthSwift Waitlist Signup*`,
+              `*Role:* ${form.role.charAt(0).toUpperCase() + form.role.slice(1)}`,
+              `*Email:* ${form.email}`,
+              `*Phone:* ${form.phone || 'N/A'}`,
+              `*City:* ${form.city || 'N/A'}`,
+              `*State:* ${form.state || 'N/A'}`,
+            ].join('\n'),
+          }),
+        }).catch(() => {}); // silent fail — never block the user
+      }
+      // ───────────────────────────────────────────────────────────────
+
       setSubmitted(true);
       toast.success("You're on the waitlist!");
     } catch (err) {
@@ -39,11 +61,11 @@ export default function LandingPage() {
         <div style={s.heroInner}>
           <div style={s.heroTag}>🛡️ SwiftShield Escrow — Every Deal, Every Time</div>
           <h1 style={s.heroTitle}>
-            Nigeria's Safest Way<br/>
-            <span style={{ color: GOLD }}>to Rent a Home.</span>
+            Nigeria's Most Secure<br/>
+            <span style={{ color: GOLD }}>Property Platform.</span>
           </h1>
           <p style={s.heroSub}>
-            Verified agents. Escrow payments. Instant legal agreements. Across Nigeria.
+            Verified listings, escrow payments, and legal protection — starting in Nigeria's most active hubs, from campus gates to city centres.
           </p>
           <div style={s.heroBtns}>
             <button style={s.btnGold} onClick={scrollToWaitlist}>
@@ -60,6 +82,24 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ── TRUST / SECURITY BAR ── */}
+      <div style={s.trustBar}>
+        {[
+          ['🔒', 'Escrow Protected', 'Every payment secured'],
+          ['✅', 'Verified Agents Only', 'Physical identity checks'],
+          ['⚖️', 'Free Legal Support', 'Professional tenancy docs'],
+          ['🏛️', 'Registered Entity', 'CAC BN 7310264'],
+        ].map(([icon, title, sub]) => (
+          <div key={title} style={s.trustItem}>
+            <span style={s.trustIcon}>{icon}</span>
+            <div>
+              <div style={s.trustTitle}>{title}</div>
+              <div style={s.trustSub}>{sub}</div>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {/* ── PROBLEM / SOLUTION ── */}
       <section style={s.section}>
@@ -131,13 +171,32 @@ export default function LandingPage() {
       <section style={{ ...s.section, background: G }}>
         <div style={{ ...s.inner, textAlign: 'center' }}>
           <h2 style={{ ...s.sectionTitle, color: 'white', fontFamily: 'Georgia,serif' }}>
-            Built for University Towns First.
+            Starting Where Trust Matters Most.
           </h2>
-          <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16, maxWidth: 640, margin: '0 auto 28px', lineHeight: 1.8 }}>
-            UNILORIN. UI. LAUTECH. OAU. We're launching in the cities where students are most vulnerable
-            to rental fraud. Search listings by proximity to your campus gate — not by an agent's vague directions.
+          <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16, maxWidth: 660, margin: '0 auto 24px', lineHeight: 1.8 }}>
+            We're launching first in Nigeria's highest-demand rental hubs. By solving the rental crisis
+            in the country's toughest markets, we're setting a new standard for verified housing that
+            will eventually cover every street in Nigeria.
           </p>
-          <button style={s.btnGold} onClick={scrollToWaitlist}>Join the Waitlist →</button>
+          <p style={{ color: GOLD, fontWeight: 700, fontSize: 15, marginBottom: 28, letterSpacing: 0.3 }}>
+            Now securing rentals in Ilorin · Ibadan · Ogbomoso · Lagos · Abuja
+          </p>
+          <div style={s.uniPoints}>
+            {[
+              ['📍', 'Proximity Search', 'Find homes by landmarks you actually know — not vague directions.'],
+              ['🛡️', 'Escrow Safety', 'Your money is only released when you are satisfied with the property.'],
+              ['⚖️', 'Legal Peace of Mind', 'Professional tenancy agreements included with every deal.'],
+            ].map(([icon, title, body]) => (
+              <div key={title} style={s.uniPoint}>
+                <span style={{ fontSize: 22 }}>{icon}</span>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: 'white', marginBottom: 3 }}>{title}</div>
+                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6 }}>{body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button style={{ ...s.btnGold, marginTop: 32 }} onClick={scrollToWaitlist}>Get Priority Access →</button>
         </div>
       </section>
 
@@ -146,11 +205,14 @@ export default function LandingPage() {
         <div style={{ ...s.inner, maxWidth: 620 }}>
           <h2 style={{ ...s.sectionTitle, marginBottom: 8 }}>Be First. Join the Waitlist.</h2>
           <p style={{ color: '#666', fontSize: 15, marginBottom: 6, lineHeight: 1.7 }}>
-            We're launching soon. Get early access, launch pricing, and first pick of verified listings.
+            We're launching soon. Get early access, launch pricing, and first pick of verified listings in your city.
+          </p>
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20, fontStyle: 'italic' }}>
+            Be the first to know when verified properties in your area go live.
           </p>
           <div style={s.counter}>
             <span style={{ fontSize: 22, marginRight: 8 }}>🚀</span>
-            <span><strong style={{ color: G }}>247+ people</strong> already on the waitlist</span>
+            <span>Join <strong style={{ color: G }}>1,000+ users</strong> already on the waitlist</span>
           </div>
 
           {submitted ? (
@@ -202,7 +264,7 @@ export default function LandingPage() {
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <button type="submit" style={{ ...s.btnGreen, width: '100%', padding: '14px', fontSize: 15, opacity: loading ? 0.7 : 1 }} disabled={loading}>
-                  {loading ? 'Joining...' : 'Join the Waitlist →'}
+                  {loading ? 'Joining...' : 'Get Priority Access →'}
                 </button>
                 <p style={{ fontSize: 11, color: '#999', textAlign: 'center', marginTop: 10 }}>
                   No spam. We only email when SouthSwift launches in your city.
@@ -309,6 +371,17 @@ const s = {
   stepTitle:     { fontSize: 15, fontWeight: 800, color: G, marginBottom: 8 },
   stepBody:      { fontSize: 13, color: '#666', lineHeight: 1.7 },
 
+  // Trust bar
+  trustBar:      { display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 0,
+                   background: 'white', borderBottom: '1px solid #E5E7EB',
+                   boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
+  trustItem:     { display: 'flex', alignItems: 'center', gap: 12,
+                   padding: '18px 32px', borderRight: '1px solid #F3F4F6',
+                   flex: '1 1 200px', minWidth: 180 },
+  trustIcon:     { fontSize: 26, flexShrink: 0 },
+  trustTitle:    { fontSize: 13, fontWeight: 800, color: '#111', marginBottom: 2 },
+  trustSub:      { fontSize: 11, color: '#888' },
+
   // Features
   featGrid:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 20 },
   featCard:      { border: `2px solid #E5E7EB`, borderRadius: 16, padding: '24px',
@@ -316,6 +389,11 @@ const s = {
   featIcon:      { fontSize: 36, marginBottom: 12 },
   featTitle:     { fontSize: 16, fontWeight: 800, color: G, marginBottom: 8 },
   featBody:      { fontSize: 13, color: '#555', lineHeight: 1.8 },
+
+  // University banner bullets
+  uniPoints:     { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 560, margin: '0 auto' },
+  uniPoint:      { display: 'flex', alignItems: 'flex-start', gap: 14, textAlign: 'left',
+                   background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '14px 18px' },
 
   // Waitlist form
   counter:       { display: 'flex', alignItems: 'center', background: '#F0F9F0',
