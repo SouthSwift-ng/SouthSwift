@@ -22,15 +22,18 @@ const getListings = async (req, res) => {
   if (max_price)   { values.push(parseInt(max_price)); where += ` AND l.rent_price <= $${values.length}`; }
   if (swiftshield === 'true') { where += ' AND l.is_swiftshield=true'; }
 
-  // Proximity filter — geocode the `near` address and apply Haversine
+  // Proximity filter — geocode via Nominatim (OpenStreetMap, free, no API key)
   if (near) {
     try {
-      const geoRes = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
-        params: { address: near, key: process.env.GOOGLE_MAPS_API_KEY }
-      });
-      const geoResult = geoRes.data.results?.[0];
+      const q = encodeURIComponent(`${near}, Nigeria`);
+      const geoRes = await axios.get(
+        `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=ng`,
+        { headers: { 'User-Agent': 'SouthSwift/1.0 (ceo@southswift.com.ng)' } }
+      );
+      const geoResult = geoRes.data?.[0];
       if (geoResult) {
-        const { lat, lng } = geoResult.geometry.location;
+        const lat = parseFloat(geoResult.lat);
+        const lng = parseFloat(geoResult.lon);
         proximityCoords = { lat, lng };
         values.push(lat, lng, parseFloat(radius_km));
         const latIdx = values.length - 2;
