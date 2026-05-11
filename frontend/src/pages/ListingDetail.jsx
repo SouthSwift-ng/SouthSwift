@@ -235,14 +235,14 @@ export default function ListingDetail() {
                 {listing.is_room_share ? (
                   <>
                     <div style={s.feeRow}><span>Per Person</span><span style={{fontWeight:600}}>&#8358;{Number(listing.room_share_price_per_person).toLocaleString()}</span></div>
-                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (2%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.room_share_price_per_person*0.02).toLocaleString()}</span></div>
-                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.room_share_price_per_person*1.02).toLocaleString()}</span></div>
+                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.room_share_price_per_person*0.05).toLocaleString()}</span></div>
+                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.room_share_price_per_person*1.05).toLocaleString()}</span></div>
                   </>
                 ) : (
                   <>
                     <div style={s.feeRow}><span>Rent</span><span style={{fontWeight:600}}>&#8358;{Number(listing.rent_price).toLocaleString()}</span></div>
-                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (2%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.rent_price*0.02).toLocaleString()}</span></div>
-                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.rent_price*1.02).toLocaleString()}</span></div>
+                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.rent_price*0.05).toLocaleString()}</span></div>
+                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.rent_price*1.05).toLocaleString()}</span></div>
                   </>
                 )}
               </div>
@@ -260,7 +260,7 @@ export default function ListingDetail() {
                 style={{...s.dealBtn,opacity:(dealing||slotsFull)?0.5:1}}>
                 {slotsFull ? 'All Slots Filled' : dealing ? 'Initiating...' :
                   listing.is_room_share
-                    ? `Claim Your Slot - N${Math.round(Number(listing.room_share_price_per_person)*1.02).toLocaleString()}`
+                    ? `Claim Your Slot - N${Math.round(Number(listing.room_share_price_per_person)*1.05).toLocaleString()}`
                     : 'Initiate SwiftShield Deal'}
               </button>
               <div style={s.trustRow}>
