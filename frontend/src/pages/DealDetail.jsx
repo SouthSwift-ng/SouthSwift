@@ -250,7 +250,7 @@ export function DealDetail() {
 }
 
 // ── CREATE LISTING ───────────────────────────────────────────────────────────
-// ── CREATE LISTING (with Google Places Autocomplete) ─────────────────────────
+// ── CREATE LISTING (with Nominatim / OpenStreetMap address search) ───────────
 export function CreateListing() {
   const navigate = useNavigate();
   const [form, setForm] = useState({
@@ -260,15 +260,15 @@ export function CreateListing() {
     latitude: null, longitude: null,
     is_room_share: false, room_share_price_per_person: '', room_share_slots: 2,
   });
-  const [loading, setL]   = useState(false);
-  const [images, setImages]   = useState([]);
+  const [loading, setL]      = useState(false);
+  const [images, setImages]  = useState([]);
   const [previews, setPreviews] = useState([]);
-  const [autocomplete, setAutocomplete] = useState(null);
 
-  const { isLoaded } = useLoadScript({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_KEY,
-    libraries: LIBRARIES,
-  });
+  // Nominatim address search
+  const [addrQuery, setAddrQuery]         = useState('');
+  const [addrResults, setAddrResults]     = useState([]);
+  const [addrSearching, setAddrSearching] = useState(false);
+  const [addrTimer, setAddrTimer]         = useState(null);
 
   const handleImages = (e) => {
     const files = Array.from(e.target.files).slice(0, 6);
@@ -276,30 +276,39 @@ export function CreateListing() {
     setPreviews(files.map(f => URL.createObjectURL(f)));
   };
 
-  // Called when user picks a place from the dropdown
-  const onPlaceChanged = () => {
-    if (!autocomplete) return;
-    const place = autocomplete.getPlace();
-    if (!place.geometry) return;
+  const handleAddrInput = (value) => {
+    setAddrQuery(value);
+    setForm(f => ({ ...f, address: value, latitude: null, longitude: null }));
+    if (addrTimer) clearTimeout(addrTimer);
+    if (value.length < 4) { setAddrResults([]); return; }
+    const t = setTimeout(async () => {
+      setAddrSearching(true);
+      try {
+        const q = encodeURIComponent(`${value}, Nigeria`);
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=5&countrycodes=ng&addressdetails=1`,
+          { headers: { 'Accept-Language': 'en' } }
+        );
+        const data = await res.json();
+        setAddrResults(data);
+      } catch { setAddrResults([]); }
+      setAddrSearching(false);
+    }, 500);
+    setAddrTimer(t);
+  };
 
-    const lat = place.geometry.location.lat();
-    const lng = place.geometry.location.lng();
-
-    // Extract city and state from address components
-    let city  = '';
-    let state = '';
-    place.address_components?.forEach(c => {
-      if (c.types.includes('locality'))               city  = c.long_name;
-      if (c.types.includes('administrative_area_level_1')) state = c.long_name;
-    });
-
+  const selectAddr = (result) => {
+    const city  = result.address?.city || result.address?.town || result.address?.village || '';
+    const state = result.address?.state || '';
+    setAddrQuery(result.display_name);
+    setAddrResults([]);
     setForm(f => ({
       ...f,
-      address:   place.formatted_address || f.address,
+      address:   result.display_name,
       city:      city  || f.city,
       state:     state || f.state,
-      latitude:  lat,
-      longitude: lng,
+      latitude:  parseFloat(result.lat),
+      longitude: parseFloat(result.lon),
     }));
   };
 
@@ -334,26 +343,26 @@ export function CreateListing() {
               onChange={e => setForm(f => ({ ...f, title: e.target.value }))}/>
           </div>
 
-          {/* ── ADDRESS AUTOCOMPLETE ── */}
-          <div>
+          {/* ── ADDRESS SEARCH (Nominatim / OpenStreetMap) ── */}
+          <div style={{ position: 'relative' }}>
             <label style={ps.label}>Full Address *</label>
-            {isLoaded ? (
-              <Autocomplete
-                onLoad={a => setAutocomplete(a)}
-                onPlaceChanged={onPlaceChanged}
-                options={{ componentRestrictions: { country: 'ng' } }}
-              >
-                <input
-                  style={ps.input}
-                  type="text"
-                  placeholder="Start typing address in Nigeria..."
-                  defaultValue={form.address}
-                  onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-                />
-              </Autocomplete>
-            ) : (
-              <input style={ps.input} type="text" placeholder="Loading address search..."
-                value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}/>
+            <input
+              style={ps.input}
+              type="text"
+              placeholder="Start typing address in Nigeria..."
+              value={addrQuery}
+              onChange={e => handleAddrInput(e.target.value)}
+              autoComplete="off"
+            />
+            {addrSearching && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>Searching...</div>}
+            {addrResults.length > 0 && (
+              <div style={ps.addrDropdown}>
+                {addrResults.map((r, i) => (
+                  <div key={i} style={ps.addrItem} onClick={() => selectAddr(r)}>
+                    📍 {r.display_name}
+                  </div>
+                ))}
+              </div>
             )}
             {form.latitude && (
               <span style={{ fontSize: 11, color: '#22C55E', marginTop: 4, display: 'block' }}>
@@ -779,6 +788,11 @@ const ps = {
   input:      { width:'100%', border:'1px solid #DDD', borderRadius:8, padding:'10px 12px',
                 fontSize:13, boxSizing:'border-box', outline:'none' },
   row2:       { display:'flex', gap:14 },
+  addrDropdown:{ position:'absolute', top:'100%', left:0, right:0, background:'white',
+                 border:'1px solid #DDD', borderRadius:8, zIndex:200,
+                 boxShadow:'0 4px 16px rgba(0,0,0,0.12)', maxHeight:220, overflowY:'auto' },
+  addrItem:    { padding:'10px 14px', fontSize:13, color:'#333', cursor:'pointer',
+                 borderBottom:'1px solid #F3F4F6', lineHeight:1.4 },
   tabs:       { display:'flex', gap:6, marginBottom:22 },
   tab:        { background:'transparent', border:'1px solid #DDD', padding:'8px 18px', borderRadius:8, cursor:'pointer', fontSize:13, color:'#666' },
   tabA:       { background:G, color:'white', border:`1px solid ${G}` },

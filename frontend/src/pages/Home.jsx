@@ -1,86 +1,81 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GoogleMap, Marker, InfoWindow, useLoadScript } from '@react-google-maps/api';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
 import { getListings } from '../utils/api';
 import ListingCard from '../components/ListingCard';
 import { Search, Shield, Map, List } from 'lucide-react';
 
-const G       = '#1B4332';
-const GOLD    = '#C8963C';
-const LIBRARIES = ['places'];
+const G    = '#1B4332';
+const GOLD = '#C8963C';
+
+// Fix Leaflet marker icons broken by webpack
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+// Price pin icon
+const makePriceIcon = (price, active) => new L.DivIcon({
+  html: `<div style="background:${active ? GOLD : G};color:white;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);border:2px solid white">₦${Math.round(price/1000)}k</div>`,
+  className: '',
+  iconAnchor: [20, 14],
+});
 
 // ── MAP VIEW ──────────────────────────────────────────────────────────────────
 function ListingsMap({ listings }) {
-  const { isLoaded } = useLoadScript({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_KEY,
-    libraries: LIBRARIES,
-  });
-
   const navigate = useNavigate();
-  const [active, setActive] = useState(null); // listing with coords being hovered
+  const [active, setActive] = useState(null);
 
   // Default center = Lagos
-  const center = { lat: 6.5244, lng: 3.3792 };
-
-  // Only show listings that have lat/lng stored
+  const center = [6.5244, 3.3792];
   const pinnable = listings.filter(l => l.latitude && l.longitude);
 
-  if (!isLoaded) return (
+  if (pinnable.length === 0) return (
     <div style={mm.placeholder}>
       <Shield size={24} color="#CCC" />
-      <span>Loading map...</span>
+      <span>No listings with map coordinates yet.</span>
     </div>
   );
 
   return (
-    <GoogleMap
-      zoom={11}
+    <MapContainer
       center={center}
-      mapContainerStyle={{ width: '100%', height: '60vh', borderRadius: 14 }}
-      options={{ streetViewControl: false, mapTypeControl: false }}
+      zoom={11}
+      style={{ width: '100%', height: '60vh', borderRadius: 14 }}
+      scrollWheelZoom={false}
     >
+      <TileLayer
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      />
       {pinnable.map(l => (
         <Marker
           key={l.id}
-          position={{ lat: parseFloat(l.latitude), lng: parseFloat(l.longitude) }}
-          onClick={() => setActive(l)}
-          label={{
-            text: `₦${Math.round(l.rent_price / 1000)}k`,
-            color: 'white',
-            fontSize: '10px',
-            fontWeight: 'bold',
-          }}
-          icon={{
-            path: window.google.maps.SymbolPath.CIRCLE,
-            scale: 18,
-            fillColor: active?.id === l.id ? GOLD : G,
-            fillOpacity: 1,
-            strokeColor: 'white',
-            strokeWeight: 2,
-          }}
-        />
-      ))}
-
-      {active && (
-        <InfoWindow
-          position={{ lat: parseFloat(active.latitude), lng: parseFloat(active.longitude) }}
-          onCloseClick={() => setActive(null)}
+          position={[parseFloat(l.latitude), parseFloat(l.longitude)]}
+          icon={makePriceIcon(l.rent_price, active?.id === l.id)}
+          eventHandlers={{ click: () => setActive(active?.id === l.id ? null : l) }}
         >
-          <div style={mm.infoWin} onClick={() => navigate(`/listings/${active.id}`)}>
-            {active.images?.[0] && (
-              <img src={active.images[0]} alt="" style={mm.infoImg}
-                onError={e => { e.target.style.display = 'none'; }} />
-            )}
-            <div style={mm.infoBody}>
-              <div style={mm.infoPrice}>₦{Number(active.rent_price).toLocaleString()}</div>
-              <div style={mm.infoTitle}>{active.title}</div>
-              <div style={mm.infoSub}>{active.city} · {active.bedrooms} bed</div>
-              <div style={mm.infoLink}>View listing →</div>
-            </div>
-          </div>
-        </InfoWindow>
-      )}
-    </GoogleMap>
+          {active?.id === l.id && (
+            <Popup onClose={() => setActive(null)}>
+              <div style={mm.infoWin} onClick={() => navigate(`/listings/${l.id}`)}>
+                {l.images?.[0] && (
+                  <img src={l.images[0]} alt="" style={mm.infoImg}
+                    onError={e => { e.target.style.display = 'none'; }} />
+                )}
+                <div style={mm.infoPrice}>₦{Number(l.rent_price).toLocaleString()}</div>
+                <div style={mm.infoTitle}>{l.title}</div>
+                <div style={mm.infoSub}>{l.city} · {l.bedrooms} bed</div>
+                <div style={mm.infoLink}>View listing →</div>
+              </div>
+            </Popup>
+          )}
+        </Marker>
+      ))}
+    </MapContainer>
   );
 }
 
@@ -88,9 +83,8 @@ const mm = {
   placeholder: { height: '60vh', background: '#F3F4F6', borderRadius: 14,
                  display: 'flex', flexDirection: 'column', alignItems: 'center',
                  justifyContent: 'center', gap: 10, color: '#999', fontSize: 14 },
-  infoWin:  { cursor: 'pointer', maxWidth: 180 },
+  infoWin:  { cursor: 'pointer', minWidth: 160 },
   infoImg:  { width: '100%', height: 90, objectFit: 'cover', borderRadius: 6, marginBottom: 8 },
-  infoBody: { padding: '0 2px' },
   infoPrice:{ fontSize: 15, fontWeight: 800, color: G },
   infoTitle:{ fontSize: 12, fontWeight: 600, color: '#111', margin: '2px 0' },
   infoSub:  { fontSize: 11, color: '#888' },
