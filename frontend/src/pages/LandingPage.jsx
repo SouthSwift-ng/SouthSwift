@@ -286,26 +286,25 @@ export default function LandingPage() {
             <div style={s.footerCols}>
               <div style={s.footerCol}>
                 <div style={s.footerColTitle}>Platform</div>
-                {[['Browse Listings', '/listings'], ['Join Waitlist', '#waitlist']].map(([label, href]) => (
-                  <a key={label} href={href} style={s.footerLink}
-                    onClick={label === 'Join Waitlist' ? (e) => { e.preventDefault(); scrollToWaitlist(); } : undefined}>
-                    {label}
-                  </a>
-                ))}
-                <span style={s.footerLink}>For Agents</span>
-                <span style={s.footerLink}>For Landlords</span>
+                <a href="/listings" style={s.footerLink}>Browse Listings</a>
+                <a href="#waitlist" style={s.footerLink}
+                  onClick={e => { e.preventDefault(); scrollToWaitlist(); }}>
+                  Join Waitlist
+                </a>
+                <a href="/register?role=agent" style={s.footerLink}>For Agents</a>
+                <a href="/register?role=landlord" style={s.footerLink}>For Landlords</a>
               </div>
               <div style={s.footerCol}>
                 <div style={s.footerColTitle}>Legal</div>
-                <span style={s.footerLink}>Privacy Policy</span>
-                <span style={s.footerLink}>Terms of Service</span>
-                <span style={s.footerLink}>Escrow Policy</span>
+                <a href="/privacy-policy" style={s.footerLink}>Privacy Policy</a>
+                <a href="/terms-of-service" style={s.footerLink}>Terms of Service</a>
+                <a href="/escrow-policy" style={s.footerLink}>Escrow Policy</a>
               </div>
               <div style={s.footerCol}>
                 <div style={s.footerColTitle}>Contact</div>
-                <span style={s.footerLink}>ceo@southswift.com.ng</span>
-                <span style={s.footerLink}>+234 816 818 5692</span>
-                <span style={s.footerLink}>southswift.com.ng</span>
+                <a href="mailto:ceo@southswift.com.ng" style={s.footerLink}>ceo@southswift.com.ng</a>
+                <a href="tel:+2348168185692" style={s.footerLink}>+234 816 818 5692</a>
+                <a href="https://southswift.com.ng" style={s.footerLink}>southswift.com.ng</a>
               </div>
             </div>
           </div>

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Autocomplete, useLoadScript } from '@react-google-maps/api';
 import {
   getDeal, confirmMoveIn, raiseDispute, sendMessage, getMessages,
   createListing, getDashboard, getPendingAgents,
@@ -13,7 +12,6 @@ import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare } from 'luc
 
 const G    = '#1B4332';
 const GOLD = '#C8963C';
-const LIBRARIES = ['places'];
 
 // ── DEAL DETAIL ──────────────────────────────────────────────────────────────
 export function DealDetail() {

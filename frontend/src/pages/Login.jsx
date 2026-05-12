@@ -1,6 +1,6 @@
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { loginUser, registerUser } from '../utils/api';
 import { useAuth } from '../App';
@@ -51,7 +51,9 @@ export function Login() {
 
 // ── REGISTER ─────────────────────────────────────────────────────────────────
 export function Register() {
-  const [form, setForm]       = useState({ full_name:'', email:'', phone:'', password:'', role:'tenant', state:'', city:'' });
+  const [searchParams]        = useSearchParams();
+  const prefilledRole         = searchParams.get('role') || 'tenant';
+  const [form, setForm]       = useState({ full_name:'', email:'', phone:'', password:'', role: ['tenant','agent','landlord'].includes(prefilledRole) ? prefilledRole : 'tenant', state:'', city:'' });
   const [loading, setLoading] = useState(false);
   const { login }             = useAuth();
   const navigate              = useNavigate();
