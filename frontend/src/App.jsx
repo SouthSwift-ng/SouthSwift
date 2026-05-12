@@ -14,6 +14,7 @@ import DealDetail    from './pages/DealDetail';
 import AdminPanel    from './pages/AdminPanel';
 import AgentProfile  from './pages/AgentProfile';
 import Navbar        from './components/Navbar';
+import { PrivacyPolicy, TermsOfService, EscrowPolicy } from './pages/LegalPages';
 
 // ── AUTH CONTEXT ──────────────────────────────────────────────────────────────
 export const AuthContext = createContext(null);
@@ -64,6 +65,9 @@ export default function App() {
             <Route path="/register"    element={<Register />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
             <Route path="/agents/:id"  element={<AgentProfile />} />
+            <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
+            <Route path="/terms-of-service"  element={<TermsOfService />} />
+            <Route path="/escrow-policy"     element={<EscrowPolicy />} />
 
             <Route path="/dashboard" element={
               <ProtectedRoute><Dashboard /></ProtectedRoute>
