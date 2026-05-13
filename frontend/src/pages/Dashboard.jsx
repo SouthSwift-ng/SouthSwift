@@ -89,7 +89,7 @@ export function Dashboard() {
         {tab==='deals' && (
           <div>
             {deals.length===0
-              ? <div style={s.empty}><Shield size={40} color="#DDD"/><p>No deals yet. Find a property to get started.</p><Link to="/" style={s.linkBtn}>Browse Listings</Link></div>
+              ? <div style={s.empty}><Shield size={40} color="#DDD"/><p>No deals yet. Find a property to get started.</p><Link to="/listings" style={s.linkBtn}>Browse Listings</Link></div>
               : deals.map(d=>(
                 <Link to={`/deals/${d.id}`} key={d.id} style={s.dealRow}>
                   <div>
@@ -191,26 +191,27 @@ export function Dashboard() {
 const s = {
   page:      { fontFamily:'Arial,sans-serif', minHeight:'80vh', background:'#F8FAF8' },
   container: { maxWidth:900, margin:'0 auto', padding:'28px 20px' },
-  header:    { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 },
-  hTitle:    { fontSize:24, fontWeight:800, color:'#111', margin:'0 0 6px' },
+  header:    { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24, flexWrap:'wrap', gap:12 },
+  hTitle:    { fontSize:22, fontWeight:800, color:'#111', margin:'0 0 6px' },
   hSub:      { display:'flex', gap:8, alignItems:'center' },
   roleBadge: { fontSize:11, fontWeight:700, padding:'2px 10px', borderRadius:10, textTransform:'uppercase', color:G },
   verBadge:  { display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#22C55E', fontWeight:700 },
   addBtn:    { background:G, color:'white', padding:'9px 18px', borderRadius:10, textDecoration:'none', fontSize:13, fontWeight:700 },
-  stats:     { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:28 },
+  stats:     { display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:14, marginBottom:28 },
   statCard:  { background:'white', borderRadius:12, padding:'18px 16px', textAlign:'center', border:'1px solid #E5E7EB' },
   statIcon:  { fontSize:24 },
   statNum:   { fontSize:28, fontWeight:900, color:G, margin:'6px 0 2px' },
   statLabel: { fontSize:12, color:'#888' },
-  tabs:      { display:'flex', gap:6, marginBottom:20 },
-  tab:       { background:'transparent', border:'1px solid #DDD', padding:'8px 18px', borderRadius:8, cursor:'pointer', fontSize:13, color:'#666' },
+  tabs:      { display:'flex', gap:6, marginBottom:20, flexWrap:'wrap' },
+  tab:       { background:'transparent', border:'1px solid #DDD', padding:'8px 16px', borderRadius:8, cursor:'pointer', fontSize:13, color:'#666', flexShrink:0 },
   tabActive: { background:G, color:'white', border:`1px solid ${G}` },
   empty:     { textAlign:'center', padding:48, color:'#999' },
   linkBtn:   { display:'inline-block', background:G, color:'white', padding:'9px 20px', borderRadius:10, textDecoration:'none', fontSize:13, fontWeight:700, marginTop:12 },
   dealRow:   { display:'flex', justifyContent:'space-between', alignItems:'center',
-               background:'white', borderRadius:10, padding:'16px 18px', marginBottom:10,
-               border:'1px solid #E5E7EB', textDecoration:'none', cursor:'pointer' },
-  dealTitle: { fontSize:14, fontWeight:700, color:'#111', marginBottom:3 },
+               background:'white', borderRadius:10, padding:'14px 16px', marginBottom:10,
+               border:'1px solid #E5E7EB', textDecoration:'none', cursor:'pointer',
+               flexWrap:'wrap', gap:8 },
+  dealTitle: { fontSize:14, fontWeight:700, color:'#111', marginBottom:3, wordBreak:'break-word' },
   dealSub:   { fontSize:12, color:'#888' },
   dealRight: { textAlign:'right' },
   dealAmt:   { fontSize:15, fontWeight:800, color:G, marginBottom:4 },
