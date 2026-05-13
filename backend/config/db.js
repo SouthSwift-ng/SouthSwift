@@ -190,6 +190,19 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS room_share_slot_number INTEGER;
     `);
 
+    // Enable RLS on all public tables — blocks direct PostgREST access;
+    // the Express backend connects as postgres superuser and is unaffected.
+    await client.query(`
+      ALTER TABLE public.users              ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.listings           ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.deals              ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.messages           ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.notifications      ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.reviews            ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.agent_profiles     ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.waitlist           ENABLE ROW LEVEL SECURITY;
+    `);
+
     // Create performance indexes
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email           ON users(email);
