@@ -60,7 +60,7 @@ export default function LandingPage() {
       <section style={s.hero}>
         <div style={s.heroInner}>
           <div style={s.heroTag}>🛡️ SwiftShield Escrow — Every Deal, Every Time</div>
-          <h1 style={s.heroTitle}>
+          <h1 style={s.heroTitle} className="ss-hero-title">
             Nigeria's Most Secure<br/>
             <span style={{ color: GOLD }}>Property Platform.</span>
           </h1>
@@ -228,7 +228,7 @@ export default function LandingPage() {
               </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} style={s.wlForm}>
+            <form onSubmit={handleSubmit} style={s.wlForm} className="ss-wl-form">
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={s.label}>Email Address *</label>
                 <input style={s.input} type="email" placeholder="you@example.com"

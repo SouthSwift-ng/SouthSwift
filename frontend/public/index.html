@@ -35,6 +35,37 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; background: #F8FAF8; }
     #root { min-height: 100vh; }
+
+    /* ── RESPONSIVE UTILITIES ── */
+    .ss-desktop { display: flex !important; }
+    .ss-hamburger { display: none !important; }
+
+    /* Leaflet fix */
+    .leaflet-container { z-index: 1; }
+
+    @media (max-width: 768px) {
+      .ss-desktop { display: none !important; }
+      .ss-hamburger { display: block !important; }
+
+      /* Legal pages sidebar stacks on mobile */
+      .ss-legal-body { flex-direction: column !important; }
+      .ss-legal-sidebar { width: 100% !important; position: static !important; }
+
+      /* ListingDetail body stacks */
+      .ss-listing-body { flex-direction: column !important; }
+      .ss-listing-right { position: static !important; }
+
+      /* Home filter bar scrollable */
+      .ss-filter-inner { overflow-x: auto !important; flex-wrap: nowrap !important; }
+    }
+
+    @media (max-width: 480px) {
+      /* Hero title smaller on tiny screens */
+      .ss-hero-title { font-size: 28px !important; }
+      .ss-section-grid { grid-template-columns: 1fr !important; }
+      /* Waitlist form single column on mobile */
+      .ss-wl-form { grid-template-columns: 1fr !important; }
+    }
   </style>
 </head>
 <body>

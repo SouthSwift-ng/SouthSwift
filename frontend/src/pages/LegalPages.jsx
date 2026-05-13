@@ -22,13 +22,13 @@ function LegalPage({ title, lastUpdated, children }) {
       </div>
 
       {/* Body */}
-      <div style={s.body}>
+      <div style={s.body} className="ss-legal-body">
         <div style={s.content}>
           {children}
         </div>
 
         {/* Sidebar */}
-        <div style={s.sidebar}>
+        <div style={s.sidebar} className="ss-legal-sidebar">
           <div style={s.sideCard}>
             <div style={s.sideTitle}>Legal Documents</div>
             {[
