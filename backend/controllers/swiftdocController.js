@@ -1,10 +1,10 @@
 /**
  * SwiftDoc — AI-Powered Tenancy Agreement Generator
- * Uses Claude AI to generate legally-worded Nigerian tenancy agreements
+ * Uses Google Gemini to generate legally-worded Nigerian tenancy agreements
  * Converts to PDF via pdfkit, uploads to Cloudinary, emails both parties
  */
 
-const Anthropic  = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const PDFDocument = require('pdfkit');
 const cloudinary  = require('cloudinary').v2;
 const { sendEmail } = require('./emailController');
@@ -21,7 +21,8 @@ const GOLD = '#C8963C';
 
 // ── GENERATE AGREEMENT TEXT VIA CLAUDE ────────────────────────────────────────
 const generateAgreementText = async ({ deal, listing, tenant, agent }) => {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const genAI  = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model  = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
   const moveInDate = deal.move_in_date
     ? new Date(deal.move_in_date).toLocaleDateString('en-NG', { day:'numeric', month:'long', year:'numeric' })
@@ -95,13 +96,8 @@ Generate a complete professional tenancy agreement with ALL of the following num
 
 Write in formal legal English. Use proper Nigerian legal conventions. Be thorough and specific. Do not use placeholder text — fill in all details from the transaction data provided. This is a real legal document.`;
 
-  const message = await client.messages.create({
-    model:      'claude-opus-4-5',
-    max_tokens: 4000,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  return message.content[0].text;
+  const result = await model.generateContent(prompt);
+  return result.response.text();
 };
 
 // ── CONVERT TEXT TO PDF ────────────────────────────────────────────────────────
@@ -260,8 +256,8 @@ const uploadPdfToCloudinary = (pdfBuffer, dealId) => {
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 const generateSwiftDoc = async ({ deal, listing, tenant, agent }) => {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.warn('⚠️  ANTHROPIC_API_KEY not set — SwiftDoc generation skipped');
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('⚠️  GEMINI_API_KEY not set — SwiftDoc generation skipped');
       return null;
     }
 
