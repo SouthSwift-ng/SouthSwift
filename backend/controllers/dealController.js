@@ -38,9 +38,9 @@ const initiateDeal = async (req, res) => {
       rent_amount = listing.rent_price;
     }
 
-    // Calculate fees — 5% from tenant, 5% from landlord (capped model)
-    const service_fee_tenant   = Math.round(rent_amount * 0.05);
-    const service_fee_landlord = Math.round(rent_amount * 0.05);
+    // Calculate fees — 2.5% from tenant, 2.5% from agent (5% total split equally)
+    const service_fee_tenant   = Math.round(rent_amount * 0.025);
+    const service_fee_landlord = Math.round(rent_amount * 0.025);
     const total_paid          = rent_amount + service_fee_tenant;
 
     // Create deal record
@@ -100,7 +100,7 @@ const initiateDeal = async (req, res) => {
       paystack_reference: reference,
       breakdown: {
         rent:           `₦${rent_amount.toLocaleString()}`,
-        swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (5%)`,
+        swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (2.5%)`,
         total_you_pay:  `₦${total_paid.toLocaleString()}`,
       },
       message: is_room_share_deal

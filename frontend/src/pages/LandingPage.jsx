@@ -179,7 +179,7 @@ export default function LandingPage() {
             will eventually cover every street in Nigeria.
           </p>
           <p style={{ color: GOLD, fontWeight: 700, fontSize: 15, marginBottom: 28, letterSpacing: 0.3 }}>
-            Now securing rentals in Ilorin · Ibadan · Ogbomoso · Lagos · Abuja
+            Securing residential rentals, student housing networks, and commercial properties across Nigeria's high-growth urban corridors and major educational hubs.
           </p>
           <div style={s.uniPoints}>
             {[
