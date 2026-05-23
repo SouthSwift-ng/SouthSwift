@@ -17,7 +17,7 @@ const register = async (req, res) => {
 
   try {
     const exists = await pool.query('SELECT id FROM users WHERE email=$1 OR phone=$2', [email, phone]);
-    if (exists.rows.length) return res.status(400).json({ error: 'Email or phone already registered.' });
+    if (exists.rows.length) return res.status(400).json({ error: 'Email or phone number already registered.' });
 
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(

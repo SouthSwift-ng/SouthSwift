@@ -2,6 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const { protect } = require('../middleware/auth');
+const { verifyPayment } = require('../controllers/dealController');
 
 // Paystack webhook — called by Paystack when payment is confirmed
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -13,9 +14,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
   const event = JSON.parse(req.body);
   if (event.event === 'charge.success') {
-    const { dealController } = require('../controllers/dealController');
-    // Verify via reference
-    await dealController?.verifyPayment?.({ body: { reference: event.data.reference } }, res);
+    // Build a synthetic req/res to reuse verifyPayment
+    const fakeReq = { body: { reference: event.data.reference } };
+    const fakeRes = {
+      json:   (data) => { console.log('✅ Webhook payment verified:', data); },
+      status: (code) => ({ json: (data) => console.error('❌ Webhook verify failed:', code, data) }),
+    };
+    await verifyPayment(fakeReq, fakeRes);
+    res.json({ received: true });
   } else {
     res.json({ received: true });
   }
@@ -23,7 +29,6 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
 router.get('/verify/:reference', protect, async (req, res) => {
   req.body = { reference: req.params.reference };
-  const { verifyPayment } = require('../controllers/dealController');
   return verifyPayment(req, res);
 });
 
