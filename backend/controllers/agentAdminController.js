@@ -1,5 +1,75 @@
 // ── AGENT CONTROLLER ─────────────────────────────────────────────────────────
 const { pool } = require('../config/db');
+const axios    = require('axios');
+
+// ── DOJAH VERIFICATION ENGINE ────────────────────────────────────────────────
+const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
+  const headers = {
+    'AppId':         process.env.DOJAH_APP_ID,
+    'Authorization': process.env.DOJAH_API_KEY,
+    'Content-Type':  'application/json',
+  };
+
+  const result = { nin_match:false, face_score:0, auto_verified:false, auto_rejected:false, reason:'' };
+
+  try {
+    // Step 1 — NIN lookup via Dojah/NIMC
+    const ninRes = await axios.get(
+      `https://api.dojah.io/api/v1/kyc/nin?nin=${nin}`,
+      { headers }
+    );
+    const ninData = ninRes.data?.entity;
+
+    if (!ninData || !ninData.nin) {
+      result.auto_rejected = true;
+      result.reason = 'The NIN provided could not be found in the NIMC database. Please check and resubmit.';
+      return result;
+    }
+
+    // Name match — at least 1 name part must match
+    const ninFullName    = `${ninData.firstname||''} ${ninData.middlename||''} ${ninData.surname||\'\'}`.toLowerCase().trim();
+    const nameParts      = agent_name.toLowerCase().split(' ').filter(Boolean);
+    result.nin_match     = nameParts.some(part => ninFullName.includes(part));
+
+    if (!result.nin_match) {
+      result.auto_rejected = true;
+      result.reason = 'The name on your account does not match the name registered to this NIN.';
+      return result;
+    }
+
+    // Step 2 — Face match: selfie vs NIN database photo
+    if (selfie_url && ninData.photo) {
+      try {
+        const faceRes = await axios.post(
+          'https://api.dojah.io/api/v1/ml/face.match',
+          { image_url_1: selfie_url, image_url_2: `data:image/jpeg;base64,${ninData.photo}` },
+          { headers }
+        );
+        const confidence = faceRes.data?.entity?.confidence || 0;
+        result.face_score = Math.round(confidence * 100);
+
+        if      (result.face_score >= 75) result.auto_verified = true;
+        else if (result.face_score >= 45) result.reason = `Face match ${result.face_score}% — queued for manual review.`;
+        else {
+          result.auto_rejected = true;
+          result.reason = 'Selfie does not match your NIN photo. Please retake in good lighting.';
+        }
+      } catch (faceErr) {
+        console.warn('Dojah face match error:', faceErr.message);
+        result.reason = 'NIN verified. Face match unavailable — queued for manual review.';
+      }
+    } else {
+      result.reason = 'NIN verified. Selfie will be reviewed manually.';
+    }
+
+    return result;
+  } catch (err) {
+    console.error('Dojah error:', err.response?.data || err.message);
+    result.reason = 'Automated verification temporarily unavailable. Documents saved for manual review.';
+    return result;
+  }
+};
+
 
 const agentController = {
 
@@ -44,6 +114,7 @@ const agentController = {
     const selfie_url      = req.files?.selfie?.[0]?.path || null;
 
     try {
+      // Save docs first
       await pool.query(`
         UPDATE agent_profiles
         SET nin=$1, agency_name=$2, bio=$3, id_document_url=$4, selfie_url=$5,
@@ -53,8 +124,115 @@ const agentController = {
       `, [nin, agency_name||null, bio||null, id_document_url, selfie_url,
           req.body.account_number||null, req.body.bank_code||null,
           req.body.account_name||null, req.user.id]);
+
+      // Get agent user details
+      const userRes = await pool.query(
+        'SELECT full_name, email FROM users WHERE id=$1', [req.user.id]
+      );
+      const agent = userRes.rows[0];
+
+      // Run Dojah verification if API key is configured
+      if (process.env.DOJAH_API_KEY && process.env.DOJAH_APP_ID) {
+        const dojahResult = await verifyWithDojah({
+          nin,
+          selfie_url,
+          agent_name: agent.full_name,
+          agent_email: agent.email,
+          user_id: req.user.id,
+        });
+
+        if (dojahResult.auto_verified) {
+          // High confidence match — auto-verify
+          await pool.query(`
+            UPDATE agent_profiles
+            SET verification_status='verified', verified_at=NOW(),
+                dojah_nin_match=$1, dojah_face_score=$2
+            WHERE user_id=$3
+          `, [true, dojahResult.face_score, req.user.id]);
+          await pool.query('UPDATE users SET is_verified=true WHERE id=$1', [req.user.id]);
+
+          const { sendEmail } = require('./emailController');
+          await sendEmail({
+            to: agent.email,
+            subject: '✅ SouthSwift — You are now a Verified Agent!',
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
+                <h1 style="color:#1B4332">South<span style="color:#C8963C">Swift</span></h1>
+                <h2 style="color:#1B4332">Congratulations, ${agent.full_name.split(' ')[0]}!</h2>
+                <p style="color:#444;font-size:15px;line-height:1.7">
+                  Your identity has been verified by SouthSwift. Your green Verified Agent badge
+                  is now active. You can start posting listings immediately.
+                </p>
+                <div style="background:#F0F9F0;border-radius:12px;padding:18px 20px;margin:20px 0">
+                  <p style="color:#1B4332;font-weight:700;margin:0 0 8px">Verification Summary</p>
+                  <p style="color:#555;font-size:13px;margin:4px 0">✅ NIN verified against NIMC database</p>
+                  <p style="color:#555;font-size:13px;margin:4px 0">✅ Face match confidence: ${dojahResult.face_score}%</p>
+                  <p style="color:#555;font-size:13px;margin:4px 0">✅ Identity confirmed</p>
+                </div>
+                <a href="https://southswift.com.ng/create-listing"
+                   style="display:inline-block;background:#1B4332;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">
+                  Post Your First Listing →
+                </a>
+              </div>
+            `,
+          });
+
+          return res.json({
+            message: '✅ Identity verified automatically! Your Verified Agent badge is now active.',
+            status: 'verified',
+            face_score: dojahResult.face_score,
+          });
+        }
+
+        if (dojahResult.auto_rejected) {
+          // Low confidence or clear mismatch — auto-reject
+          await pool.query(
+            "UPDATE agent_profiles SET verification_status='rejected' WHERE user_id=$1",
+            [req.user.id]
+          );
+          const { sendEmail } = require('./emailController');
+          await sendEmail({
+            to: agent.email,
+            subject: '⚠️ SouthSwift — Verification Unsuccessful',
+            html: `
+              <p>Dear ${agent.full_name.split(' ')[0]},</p>
+              <p>We were unable to verify your identity automatically. ${dojahResult.reason}</p>
+              <p>Please ensure your selfie clearly shows your face and your ID document is legible.
+              You may resubmit at any time. If you believe this is an error, contact us at
+              legal@southswift.com.ng.</p>
+            `,
+          });
+          return res.status(400).json({
+            message: dojahResult.reason || 'Identity verification failed. Please resubmit with a clearer selfie.',
+            status: 'rejected',
+          });
+        }
+
+        // Medium confidence — flag for manual review
+        const { sendEmail } = require('./emailController');
+        await sendEmail({
+          to: 'ceo@southswift.com.ng',
+          subject: `🔍 Manual Review Required — ${agent.full_name}`,
+          html: `
+            <p>Agent ${agent.full_name} (${agent.email}) requires manual review.</p>
+            <p>Face match score: ${dojahResult.face_score}%</p>
+            <p>NIN match: ${dojahResult.nin_match ? 'Yes' : 'Partial'}</p>
+            <p>Reason: ${dojahResult.reason}</p>
+            <p><a href="https://southswift.com.ng/admin">Review in Admin Panel →</a></p>
+          `,
+        });
+        return res.json({
+          message: 'Verification submitted. Our team will review your documents within 24 hours.',
+          status: 'pending',
+        });
+      }
+
+      // No Dojah key — fall back to manual review
       res.json({ message: 'Verification request submitted. SouthSwift will review within 48 hours.' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+      console.error('Verification error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
   },
 
   // GET /api/agents/my/listings

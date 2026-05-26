@@ -171,7 +171,9 @@ const initDB = async () => {
       ADD COLUMN IF NOT EXISTS account_number VARCHAR(20),
       ADD COLUMN IF NOT EXISTS bank_code      VARCHAR(10),
       ADD COLUMN IF NOT EXISTS account_name   VARCHAR(255),
-      ADD COLUMN IF NOT EXISTS paystack_recipient_code VARCHAR(100);
+      ADD COLUMN IF NOT EXISTS paystack_recipient_code VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS dojah_nin_match  BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS dojah_face_score INTEGER DEFAULT 0;
     `);
 
     // Add room share columns to listings if not exists
