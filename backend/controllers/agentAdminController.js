@@ -27,7 +27,7 @@ const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
     }
 
     // Name match — at least 1 name part must match
-    const ninFullName    = `${ninData.firstname||''} ${ninData.middlename||''} ${ninData.surname||\'\'}`.toLowerCase().trim();
+    const ninFullName    = `${ninData.firstname||''} ${ninData.middlename||''} ${ninData.surname||''}`.toLowerCase().trim();
     const nameParts      = agent_name.toLowerCase().split(' ').filter(Boolean);
     result.nin_match     = nameParts.some(part => ninFullName.includes(part));
 
