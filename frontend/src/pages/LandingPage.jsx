@@ -1,7 +1,39 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
 import { joinWaitlist } from '../utils/api';
+
+// Fix Leaflet marker icons
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+// Custom cluster bubble icon
+const makeBubble = (label) => new L.DivIcon({
+  html: `<div style="background:#1B4332;color:white;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.25);">${label}</div>`,
+  className: '',
+  iconAnchor: [20, 14],
+});
+
+// Nigeria city clusters matching the Figma
+const CLUSTERS = [
+  { label:'829',  lat:11.85, lng:8.52  }, // Kano area
+  { label:'1.4K', lat:12.00, lng:12.20 }, // NE
+  { label:'738',  lat:10.52, lng:7.44  }, // Kaduna
+  { label:'472',  lat:9.08,  lng:4.57  }, // Niger/Minna
+  { label:'103',  lat:10.30, lng:9.85  }, // Bauchi
+  { label:'3K+',  lat:7.38,  lng:3.90  }, // Ibadan/Lagos
+  { label:'2K',   lat:7.49,  lng:6.75  }, // Abuja area
+  { label:'1.9K', lat:6.45,  lng:7.50  }, // Enugu
+  { label:'125',  lat:7.20,  lng:11.00 }, // East
+  { label:'77',   lat:4.85,  lng:2.80  }, // Lagos South
+];
 
 const SLACK_WEBHOOK = process.env.REACT_APP_SLACK_WEBHOOK_URL || '';
 const G    = '#1B4332';
@@ -149,34 +181,26 @@ export default function LandingPage() {
       <section style={s.searchSection}>
         <div style={s.searchInner}>
 
-          {/* Map placeholder */}
+          {/* Real OpenStreetMap centered on Nigeria with cluster bubbles */}
           <div style={s.mapWrap}>
-            <div style={s.mapPlaceholder}>
-              <div style={s.mapOverlay}>
-                <div style={{ textAlign:'center', color:'#555' }}>
-                  <div style={{ fontSize:32, marginBottom:8 }}>🗺️</div>
-                  <div style={{ fontSize:13, fontWeight:600 }}>Nigeria Property Map</div>
-                  <div style={{ fontSize:11, color:'#888', marginTop:4 }}>Live map loads with listings</div>
-                </div>
-                {/* City bubbles */}
-                {[
-                  { label:'3K+', top:'52%', left:'36%' },
-                  { label:'2K',  top:'58%', left:'46%' },
-                  { label:'1.9K',top:'62%', left:'52%' },
-                  { label:'829', top:'20%', left:'30%' },
-                  { label:'1.4K',top:'18%', left:'50%' },
-                  { label:'738', top:'30%', left:'28%' },
-                  { label:'472', top:'44%', left:'22%' },
-                  { label:'103', top:'36%', left:'54%' },
-                  { label:'125', top:'58%', left:'68%' },
-                  { label:'77',  top:'76%', left:'18%' },
-                ].map((b,i) => (
-                  <div key={i} style={{ ...s.mapBubble, top:b.top, left:b.left }}>
-                    {b.label}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <MapContainer
+              center={[9.0820, 8.6753]}
+              zoom={5.4}
+              style={{ width:'100%', height:460, borderRadius:12 }}
+              scrollWheelZoom={false}
+              zoomControl={false}
+              attributionControl={false}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution=""
+              />
+              {CLUSTERS.map((c, i) => (
+                <Marker key={i} position={[c.lat, c.lng]} icon={makeBubble(c.label)}>
+                  <Popup><span style={{fontSize:12}}>Properties near this area</span></Popup>
+                </Marker>
+              ))}
+            </MapContainer>
           </div>
 
           {/* Search panel */}
@@ -215,12 +239,25 @@ export default function LandingPage() {
 
             {/* Sample listing cards */}
             {[
-              { badge:'Verified', title:'2-room apartment in the city center', addr:'Igwe Orizu Rd, Nnewi, Anambra 234046', price:'₦1.5M / monthly' },
-              { badge:'Verified', title:'Single-room apartment', addr:'Mr. John Doe, 15 Adeola Odeku Street, Victoria Island, Lagos 101241', price:'₦800K / monthly' },
+              {
+                badge:'Verified',
+                title:'2-room apartment in the city center',
+                addr:'Igwe Orizu Rd, Nnewi, Anambra 234046',
+                price:'₦1.5M / monthly',
+                img:'https://images.pexels.com/photos/1457842/pexels-photo-1457842.jpeg?auto=compress&cs=tinysrgb&w=200&h=150',
+              },
+              {
+                badge:'Verified',
+                title:'Single-room apartment',
+                addr:'Mr. John Doe, 15 Adeola Odeku Street, Victoria Island, Lagos 101241',
+                price:'₦800K / monthly',
+                img:'https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg?auto=compress&cs=tinysrgb&w=200&h=150',
+              },
             ].map((l,i) => (
               <div key={i} style={s.listingCard} onClick={() => navigate('/listings')}>
                 <div style={s.listingImg}>
-                  <div style={{ ...s.listingImgBg, background: i===0?'#E8F4F0':'#F4EEE8' }} />
+                  <img src={l.img} alt={l.title} style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}
+                    onError={e => { e.target.style.display='none'; }} />
                   <div style={s.listingBadge}>{l.badge}</div>
                 </div>
                 <div style={s.listingInfo}>
