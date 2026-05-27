@@ -90,34 +90,35 @@ export default function LandingPage() {
           {/* Right — photo + floating cards */}
           <div style={s.heroRight}>
             <div style={s.heroImgWrap}>
-              {/* Property photo placeholder */}
-              <div style={s.heroImgPlaceholder}>
-                <div style={s.heroImgOverlay}>
-                  {/* Lawyer badge */}
-                  <div style={s.lawyerBadge}>
-                    <div style={s.lawyerAvatar}>AR</div>
+              <img
+                src="https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80"
+                alt="Property"
+                style={s.heroImg}
+                onError={e => { e.target.style.display='none'; }}
+              />
+              {/* Lawyer badge — top right */}
+              <div style={s.lawyerBadge}>
+                <div style={s.lawyerAvatar}>AR</div>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>Aaron R.</div>
+                  <div style={{ fontSize:11, color:'#22C55E', fontWeight:600 }}>Certified lawyer</div>
+                </div>
+              </div>
+              {/* Feature pills — bottom left, stacked vertically */}
+              <div style={s.heroPills}>
+                {[
+                  { icon:'⚖️', title:'Legal Support',       sub:'In-app lawyers' },
+                  { icon:'💬', title:'In-App Chat & Calls', sub:'Direct communication' },
+                  { icon:'🧾', title:'No illegal fees',     sub:'Transparent paywall' },
+                ].map(p => (
+                  <div key={p.title} style={s.heroPill}>
+                    <span style={{ fontSize:18 }}>{p.icon}</span>
                     <div>
-                      <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>Aaron R.</div>
-                      <div style={{ fontSize:11, color:'#22C55E', fontWeight:600 }}>Certified lawyer</div>
+                      <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>{p.title}</div>
+                      <div style={{ fontSize:11, color:'#666' }}>{p.sub}</div>
                     </div>
                   </div>
-                  {/* Feature pills */}
-                  <div style={s.heroPills}>
-                    {[
-                      { icon:'⚖️', title:'Legal Support',    sub:'In-app lawyers' },
-                      { icon:'💬', title:'In-App Chat & Calls', sub:'Direct communication' },
-                      { icon:'🧾', title:'No illegal fees',   sub:'Transparent paywall' },
-                    ].map(p => (
-                      <div key={p.title} style={s.heroPill}>
-                        <span style={{ fontSize:18 }}>{p.icon}</span>
-                        <div>
-                          <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>{p.title}</div>
-                          <div style={{ fontSize:11, color:'#666' }}>{p.sub}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
@@ -489,17 +490,19 @@ const s = {
 
   // Hero image
   heroRight: { flex:'1 1 460px', minWidth:300 },
-  heroImgWrap:{ position:'relative' },
-  heroImgPlaceholder:{ width:'100%', height:400, borderRadius:16, overflow:'hidden', background:'#F0EDE8', position:'relative' },
-  heroImgOverlay:{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
-                   justifyContent:'space-between', padding:20 },
-  lawyerBadge:{ alignSelf:'flex-end', background:'white', borderRadius:12, padding:'10px 14px',
-                display:'flex', alignItems:'center', gap:10, boxShadow:'0 2px 12px rgba(0,0,0,0.1)' },
-  lawyerAvatar:{ width:36, height:36, borderRadius:'50%', background:G, color:'white',
-                  display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700 },
-  heroPills: { display:'flex', flexDirection:'column', gap:8, alignSelf:'flex-end' },
-  heroPill:  { background:'white', borderRadius:10, padding:'10px 14px', display:'flex',
-               alignItems:'center', gap:10, boxShadow:'0 2px 8px rgba(0,0,0,0.08)' },
+  heroImgWrap:{ position:'relative', borderRadius:16, overflow:'hidden' },
+  heroImg:    { width:'100%', height:420, objectFit:'cover', display:'block', borderRadius:16 },
+  lawyerBadge:{ position:'absolute', top:16, right:16, background:'white', borderRadius:12,
+                padding:'10px 14px', display:'flex', alignItems:'center', gap:10,
+                boxShadow:'0 2px 12px rgba(0,0,0,0.12)' },
+  lawyerAvatar:{ width:36, height:36, borderRadius:'50%', background:'#1B4332', color:'white',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:12, fontWeight:700, flexShrink:0 },
+  heroPills:  { position:'absolute', bottom:16, left:16,
+                display:'flex', flexDirection:'column', gap:8 },
+  heroPill:   { background:'white', borderRadius:10, padding:'10px 14px',
+                display:'flex', alignItems:'center', gap:10,
+                boxShadow:'0 2px 8px rgba(0,0,0,0.1)' },
 
   // Trust bar
   trustBar:  { background:'#F8FAF8', borderTop:'1px solid #E5E7EB', borderBottom:'1px solid #E5E7EB', padding:'20px 24px' },

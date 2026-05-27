@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useState, useEffect, createContext, useContext } from 'react';
 import { getMe } from './utils/api';
@@ -16,7 +16,6 @@ import AgentProfile  from './pages/AgentProfile';
 import Navbar        from './components/Navbar';
 import { PrivacyPolicy, TermsOfService, EscrowPolicy } from './pages/LegalPages';
 
-// ── AUTH CONTEXT ──────────────────────────────────────────────────────────────
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
@@ -27,6 +26,21 @@ const ProtectedRoute = ({ children, roles }) => {
   if (roles && !roles.includes(user.role)) return <Navigate to="/dashboard" replace />;
   return children;
 };
+
+// Hide Navbar on landing page — it has its own navbar
+const HIDE_NAVBAR_ROUTES = ['/'];
+function AppShell({ children }) {
+  const location = useLocation();
+  const hideNav  = HIDE_NAVBAR_ROUTES.includes(location.pathname);
+  return (
+    <>
+      {!hideNav && <Navbar />}
+      <div style={{ ...styles.main, paddingTop: hideNav ? 0 : 64 }}>
+        {children}
+      </div>
+    </>
+  );
+}
 
 export default function App() {
   const [user, setUser]       = useState(null);
@@ -56,8 +70,7 @@ export default function App() {
     <AuthContext.Provider value={{ user, loading, login, logout }}>
       <BrowserRouter>
         <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
-        <Navbar />
-        <div style={styles.main}>
+        <AppShell>
           <Routes>
             <Route path="/"            element={<LandingPage />} />
             <Route path="/listings"    element={<Home />} />
@@ -68,7 +81,6 @@ export default function App() {
             <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
             <Route path="/terms-of-service"  element={<TermsOfService />} />
             <Route path="/escrow-policy"     element={<EscrowPolicy />} />
-
             <Route path="/dashboard" element={
               <ProtectedRoute><Dashboard /></ProtectedRoute>
             } />
@@ -83,14 +95,14 @@ export default function App() {
             } />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </div>
+        </AppShell>
       </BrowserRouter>
     </AuthContext.Provider>
   );
 }
 
 const styles = {
-  main:    { minHeight: '100vh', background: '#F8FAF8', paddingTop: 64 },
+  main:    { minHeight: '100vh', background: '#F8FAF8' },
   loading: { display:'flex', alignItems:'center', justifyContent:'center',
              height:'100vh', fontSize:18, color:'#1B4332', fontFamily:'Arial' },
 };
