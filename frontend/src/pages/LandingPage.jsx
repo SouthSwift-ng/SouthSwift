@@ -91,10 +91,10 @@ export default function LandingPage() {
           <div style={s.heroRight}>
             <div style={s.heroImgWrap}>
               <img
-                src="https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80"
+                src="https://images.pexels.com/photos/1396122/pexels-photo-1396122.jpeg?auto=compress&cs=tinysrgb&w=800"
                 alt="Property"
                 style={s.heroImg}
-                onError={e => { e.target.style.display='none'; }}
+                onError={e => { e.target.style.background='#E8E4DC'; e.target.src=''; }}
               />
               {/* Lawyer badge — top right */}
               <div style={s.lawyerBadge}>
@@ -491,7 +491,8 @@ const s = {
   // Hero image
   heroRight: { flex:'1 1 460px', minWidth:300 },
   heroImgWrap:{ position:'relative', borderRadius:16, overflow:'hidden' },
-  heroImg:    { width:'100%', height:420, objectFit:'cover', display:'block', borderRadius:16 },
+  heroImg:    { width:'100%', height:420, objectFit:'cover', display:'block',
+                borderRadius:16, background:'#E8E4DC', minHeight:420 },
   lawyerBadge:{ position:'absolute', top:16, right:16, background:'white', borderRadius:12,
                 padding:'10px 14px', display:'flex', alignItems:'center', gap:10,
                 boxShadow:'0 2px 12px rgba(0,0,0,0.12)' },
