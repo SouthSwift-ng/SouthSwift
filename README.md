@@ -88,7 +88,8 @@ Server starts on `http://localhost:5000`. Tables and indexes are created automat
 cd frontend
 npm install
 cp .env.example .env
-# Set REACT_APP_API_URL=http://localhost:5000/api
+# Local dev: set REACT_APP_API_URL=http://localhost:5000/api
+# Vercel deploy (frontend + backend services): set REACT_APP_API_URL=/_/backend/api
 npm start
 ```
 
@@ -119,7 +120,7 @@ App opens at `http://localhost:3000`.
 
 | Variable | Value |
 |---|---|
-| `REACT_APP_API_URL` | `http://localhost:5000/api` (dev) or your Render URL + `/api` (prod) |
+| `REACT_APP_API_URL` | `http://localhost:5000/api` (local dev) or `/_/backend/api` (Vercel production with services) |
 
 ---
 
@@ -132,24 +133,21 @@ App opens at `http://localhost:3000`.
 3. Settings → Database → Connection String (URI mode)
 4. Copy and set as `DATABASE_URL` in backend `.env`
 
-### 2. Backend — Render (Free)
+### 2. Backend — Vercel Services (same repo)
 
-1. Create account at render.com → connect GitHub
-2. New → Web Service → select your repo
-3. Set:
-   - **Root Directory:** `backend`
-   - **Build Command:** `npm install`
-   - **Start Command:** `node server.js`
-4. Add all backend environment variables
-5. Deploy → note your URL (e.g. `https://southswift-api.onrender.com`)
+1. Create account at vercel.com → connect GitHub
+2. Import your repo (or open existing SouthSwift project)
+3. Ensure `vercel.json` includes both `frontend` and `backend` in `experimentalServices`
+4. Add all backend environment variables in the Vercel project
+5. Deploy and verify backend health at `/_/backend/`
 
 ### 3. Frontend — Vercel (Free)
 
 1. Create account at vercel.com → connect GitHub
 2. Import your repo
 3. Set:
-   - **Root Directory:** `frontend`
-   - **Environment Variable:** `REACT_APP_API_URL` = `https://southswift-api.onrender.com/api`
+   - **Root Directory:** `frontend` (if using separate project setup)
+   - **Environment Variable:** `REACT_APP_API_URL` = `/_/backend/api`
 4. Deploy → note your URL (e.g. `https://southswift.vercel.app`)
 
 ### 4. Custom Domain (Truehost → Vercel)
