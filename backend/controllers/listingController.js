@@ -34,11 +34,13 @@ const getListings = async (req, res) => {
       if (geoResult) {
         const lat = parseFloat(geoResult.lat);
         const lng = parseFloat(geoResult.lon);
-        proximityCoords = { lat, lng };
+        proximityCoords = { lat, lng, latIdx: 0, lngIdx: 0 };
         values.push(lat, lng, parseFloat(radius_km));
         const latIdx = values.length - 2;
         const lngIdx = values.length - 1;
         const radIdx = values.length;
+        proximityCoords.latIdx = latIdx;
+        proximityCoords.lngIdx = lngIdx;
         where += ` AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
           AND (6371 * acos(
             cos(radians($${latIdx})) * cos(radians(l.latitude)) *
@@ -51,12 +53,12 @@ const getListings = async (req, res) => {
     }
   }
 
-  // Build the distance expression for SELECT (only when coords are known)
+  // Build the distance expression for SELECT — reuse parameterized indices from WHERE
   const distanceExpr = proximityCoords
     ? `, ROUND(CAST(6371 * acos(
-        cos(radians(${proximityCoords.lat})) * cos(radians(l.latitude)) *
-        cos(radians(l.longitude) - radians(${proximityCoords.lng})) +
-        sin(radians(${proximityCoords.lat})) * sin(radians(l.latitude))
+        cos(radians($${proximityCoords.latIdx})) * cos(radians(l.latitude)) *
+        cos(radians(l.longitude) - radians($${proximityCoords.lngIdx})) +
+        sin(radians($${proximityCoords.latIdx})) * sin(radians(l.latitude))
       ) AS numeric), 1) AS distance_km`
     : '';
 
@@ -86,14 +88,14 @@ const getListings = async (req, res) => {
         pages: Math.ceil(total / parseInt(limit)),
       }
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
 };
 
 // GET /api/listings/:id
 const getListing = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT l.*, u.full_name AS agent_name, u.phone AS agent_phone, u.email AS agent_email,
+      `SELECT l.*, u.full_name AS agent_name,
               ap.verification_status, ap.agency_name, ap.rating AS agent_rating,
               ap.total_deals, ap.bio AS agent_bio
        FROM listings l
@@ -105,7 +107,7 @@ const getListing = async (req, res) => {
     if (!result.rows.length) return res.status(404).json({ error: 'Listing not found.' });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -165,7 +167,7 @@ const createListing = async (req, res) => {
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -187,7 +189,7 @@ const updateListing = async (req, res) => {
     );
     res.json({ message: 'Listing updated.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -197,7 +199,7 @@ const deleteListing = async (req, res) => {
     await pool.query('DELETE FROM listings WHERE id=$1 AND agent_id=$2', [req.params.id, req.user.id]);
     res.json({ message: 'Listing deleted.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -209,7 +211,7 @@ const getMyListings = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -229,7 +231,7 @@ const getRoomShareStatus = async (req, res) => {
     `, [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Listing not found.' });
     res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
 };
 
 module.exports = { getListings, getListing, createListing, updateListing, deleteListing, getMyListings, getRoomShareStatus };

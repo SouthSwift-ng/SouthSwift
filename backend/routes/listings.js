@@ -10,7 +10,7 @@ router.get('/:id',                    getListing);
 router.get('/:id/room-share-status',  getRoomShareStatus);
 router.post('/', protect, agentOnly, (req, res, next) => {
   uploadListingImages(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File too large (max 5MB).' : 'Upload failed. Please check your files.' });
     next();
   });
 }, createListing);

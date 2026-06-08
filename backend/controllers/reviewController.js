@@ -39,7 +39,7 @@ const submitReview = async (req, res) => {
     );
 
     res.status(201).json({ message: 'Review submitted. Thank you!' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
 };
 
 // GET /api/reviews/agent/:agentId — get reviews for an agent
@@ -54,7 +54,7 @@ const getAgentReviews = async (req, res) => {
       ORDER BY r.created_at DESC
     `, [req.params.agentId]);
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
 };
 
 module.exports = { submitReview, getAgentReviews };

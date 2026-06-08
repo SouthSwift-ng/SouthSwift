@@ -86,7 +86,7 @@ const agentController = {
         ORDER BY ap.total_deals DESC
       `);
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // GET /api/agents/:id
@@ -102,7 +102,7 @@ const agentController = {
       `, [req.params.id]);
       if (!result.rows.length) return res.status(404).json({ error: 'Agent not found.' });
       res.json(result.rows[0]);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // POST /api/agents/verify-request — agent submits verification docs
@@ -231,7 +231,7 @@ const agentController = {
       res.json({ message: 'Verification request submitted. SouthSwift will review within 48 hours.' });
     } catch (err) {
       console.error('Verification error:', err.message);
-      res.status(500).json({ error: err.message });
+      console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
     }
   },
 
@@ -242,7 +242,7 @@ const agentController = {
         'SELECT * FROM listings WHERE agent_id=$1 ORDER BY created_at DESC', [req.user.id]
       );
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 };
 
@@ -266,7 +266,7 @@ const adminController = {
         verified_agents:   parseInt(agents.rows[0].count),
         total_revenue_ngn: parseInt(revenue.rows[0].total),
       });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // GET /api/admin/agents/pending
@@ -281,7 +281,7 @@ const adminController = {
         ORDER BY u.created_at DESC
       `);
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // PUT /api/admin/agents/:userId/verify
@@ -301,7 +301,7 @@ const adminController = {
         await pool.query("UPDATE users SET is_verified=true WHERE id=$1", [req.params.userId]);
       }
       res.json({ message: `Agent ${action}d successfully.` });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // GET /api/admin/deals
@@ -318,7 +318,7 @@ const adminController = {
         ORDER BY d.created_at DESC LIMIT 100
       `);
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // PUT /api/admin/deals/:id/release-funds
@@ -342,8 +342,25 @@ const adminController = {
       if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
       const deal = dealResult.rows[0];
 
+      if (deal.funds_released_at)
+        return res.status(400).json({ error: 'Funds already released for this deal.' });
+
+      if (!['escrow_held', 'docs_generated', 'completed'].includes(deal.status))
+        return res.status(400).json({ error: `Cannot release funds for deal in status: ${deal.status}` });
+
+      if (deal.status === 'disputed')
+        return res.status(400).json({ error: 'Cannot release funds for a disputed deal. Resolve the dispute first.' });
+
       if (!deal.account_number || !deal.bank_code)
         return res.status(400).json({ error: 'Agent has no bank account on record. Ask agent to update their profile.' });
+
+      // Atomically mark funds as released to prevent double-release
+      const lockResult = await pool.query(
+        "UPDATE deals SET funds_released_at=NOW(), updated_at=NOW() WHERE id=$1 AND funds_released_at IS NULL RETURNING id",
+        [req.params.id]
+      );
+      if (!lockResult.rows.length)
+        return res.status(400).json({ error: 'Funds already released for this deal.' });
 
       let recipientCode = deal.paystack_recipient_code;
 
@@ -371,19 +388,20 @@ const adminController = {
         amount:    transferAmount,
         recipient: recipientCode,
         reason:    `SouthSwift Deal ${deal.id.slice(0,8)} — Property Rental`,
+        reference: `SS-RELEASE-${deal.id.slice(0,8)}-${Date.now()}`,
       }, { headers: paystackHeaders });
 
       const transferCode = transferRes.data.data.transfer_code;
 
       await pool.query(
-        "UPDATE deals SET status='completed', funds_released_at=NOW(), notes=$1 WHERE id=$2",
+        "UPDATE deals SET status='completed', notes=$1 WHERE id=$2",
         [`Paystack transfer: ${transferCode}`, req.params.id]
       );
 
       res.json({ message: 'Funds disbursed via Paystack Transfer.', transfer_code: transferCode });
     } catch (err) {
       console.error('Fund release error:', err.response?.data || err.message);
-      res.status(500).json({ error: err.response?.data?.message || err.message });
+      res.status(500).json({ error: 'Fund release failed. Please try again or contact support.' });
     }
   },
 
@@ -402,9 +420,22 @@ const adminController = {
       if (deal.status !== 'disputed')
         return res.status(400).json({ error: 'Deal is not disputed.' });
 
+      // Determine next status based on winner — only mark funds_released for agent winner
+      let newStatus, newNotes;
+      if (winner === 'tenant') {
+        newStatus = 'cancelled';
+        newNotes = `DISPUTE RESOLVED (tenant wins — refund required): ${resolution}`;
+      } else if (winner === 'agent') {
+        newStatus = 'completed';
+        newNotes = `DISPUTE RESOLVED (agent wins — release funds via admin): ${resolution}`;
+      } else {
+        newStatus = 'completed';
+        newNotes = `DISPUTE RESOLVED (split — partial refund + partial release required): ${resolution}`;
+      }
+
       await pool.query(
-        "UPDATE deals SET status='completed', notes=$1, funds_released_at=NOW(), updated_at=NOW() WHERE id=$2",
-        [`DISPUTE RESOLVED: ${resolution} | Winner: ${winner}`, req.params.id]
+        "UPDATE deals SET status=$1, notes=$2, updated_at=NOW() WHERE id=$3",
+        [newStatus, newNotes, req.params.id]
       );
 
       const { sendEmail } = require('./emailController');
@@ -412,19 +443,30 @@ const adminController = {
       const agentRes  = await pool.query('SELECT email, full_name FROM users WHERE id=$1', [deal.agent_id]);
       const tenant = tenantRes.rows[0]; const agent = agentRes.rows[0];
 
+      const winnerLabel = winner === 'tenant' ? 'Funds will be refunded to the tenant.'
+        : winner === 'agent' ? 'Funds will be released to the agent.'
+        : 'A split resolution will be processed.';
+
       await sendEmail({
         to: tenant.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${tenant.full_name}, your dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p>`,
+        html: `<p>Dear ${tenant.full_name}, your dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p><p>${winnerLabel}</p>`,
       });
       await sendEmail({
         to: agent.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${agent.full_name}, the dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p>`,
+        html: `<p>Dear ${agent.full_name}, the dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p><p>${winnerLabel}</p>`,
+      });
+
+      // Alert admin for manual fund routing
+      await sendEmail({
+        to: 'ceo@southswift.com.ng',
+        subject: `💰 ADMIN: Dispute Resolved — ${winner} wins — Action Required`,
+        html: `<p>Deal ${deal.id.slice(0,8)} dispute resolved. Winner: <strong>${winner}</strong>.</p><p>${winnerLabel}</p><p>Amount: ₦${Number(deal.rent_amount).toLocaleString()}</p>`,
       });
 
       res.json({ message: 'Dispute resolved and parties notified.' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   },
 
   // GET /api/admin/users
@@ -434,7 +476,7 @@ const adminController = {
         'SELECT id, full_name, email, phone, role, is_verified, state, city, created_at FROM users ORDER BY created_at DESC'
       );
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
   // GET /api/admin/listings
@@ -448,7 +490,7 @@ const adminController = {
         ORDER BY l.created_at DESC
       `);
       res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 };
 

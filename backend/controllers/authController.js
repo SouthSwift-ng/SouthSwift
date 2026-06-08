@@ -17,7 +17,7 @@ const register = async (req, res) => {
 
   try {
     const exists = await pool.query('SELECT id FROM users WHERE email=$1 OR phone=$2', [email, phone]);
-    if (exists.rows.length) return res.status(400).json({ error: 'Email or phone number already registered.' });
+    if (exists.rows.length) return res.status(400).json({ error: 'Registration failed. Please check your details or try logging in.' });
 
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
@@ -38,7 +38,7 @@ const register = async (req, res) => {
 
     res.status(201).json({ user, token: generateToken(user.id) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -49,16 +49,16 @@ const login = async (req, res) => {
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE email=$1', [email]);
-    if (!result.rows.length) return res.status(401).json({ error: 'Invalid credentials.' });
-
+    // Constant-time: always run bcrypt even if user not found (prevents timing oracle)
+    const dummyHash = '$2a$12$000000000000000000000u2jCmrIRyBhNJLGHOb3DOiGH0FD2TFVC';
     const user = result.rows[0];
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.status(401).json({ error: 'Invalid credentials.' });
+    const match = await bcrypt.compare(password, user ? user.password_hash : dummyHash);
+    if (!user || !match) return res.status(401).json({ error: 'Invalid credentials.' });
 
     const { password_hash, ...safeUser } = user;
     res.json({ user: safeUser, token: generateToken(user.id) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -76,7 +76,7 @@ const getMe = async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -93,7 +93,7 @@ const updateProfile = async (req, res) => {
     );
     res.json({ message: 'Profile updated successfully.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 

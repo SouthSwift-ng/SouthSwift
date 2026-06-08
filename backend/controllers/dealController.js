@@ -14,12 +14,19 @@ const initiateDeal = async (req, res) => {
   const { listing_id, move_in_date, lease_duration_months } = req.body;
   if (!listing_id) return res.status(400).json({ error: 'Listing ID required.' });
 
+  const client = await pool.connect();
   try {
-    // Get listing details
-    const listingResult = await pool.query(
-      'SELECT * FROM listings WHERE id=$1 AND is_available=true', [listing_id]
+    await client.query('BEGIN');
+
+    // Get listing details with row lock to prevent slot race conditions
+    const listingResult = await client.query(
+      'SELECT * FROM listings WHERE id=$1 AND is_available=true FOR UPDATE',
+      [listing_id]
     );
-    if (!listingResult.rows.length) return res.status(404).json({ error: 'Listing not found or unavailable.' });
+    if (!listingResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Listing not found or unavailable.' });
+    }
     const listing = listingResult.rows[0];
 
     // Room share handling
@@ -29,6 +36,7 @@ const initiateDeal = async (req, res) => {
 
     if (listing.is_room_share) {
       if (listing.room_share_slots_filled >= listing.room_share_slots) {
+        await client.query('ROLLBACK');
         return res.status(400).json({ error: 'All room share slots are filled for this listing.' });
       }
       rent_amount = listing.room_share_price_per_person;
@@ -44,7 +52,7 @@ const initiateDeal = async (req, res) => {
     const total_paid          = rent_amount + service_fee_tenant;
 
     // Create deal record
-    const dealResult = await pool.query(
+    const dealResult = await client.query(
       `INSERT INTO deals
        (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
         service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
@@ -57,13 +65,15 @@ const initiateDeal = async (req, res) => {
     );
     const deal = dealResult.rows[0];
 
-    // Increment room_share_slots_filled if this is a room share deal
+    // Increment room_share_slots_filled atomically within the transaction
     if (is_room_share_deal) {
-      await pool.query(
-        'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1',
+      await client.query(
+        'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1 AND room_share_slots_filled < room_share_slots',
         [listing_id]
       );
     }
+
+    await client.query('COMMIT');
 
     // Initiate Paystack payment
     const paystackRes = await axios.post(
@@ -108,8 +118,11 @@ const initiateDeal = async (req, res) => {
         : '🛡️ SwiftShield escrow initiated. Complete payment to secure your deal.'
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Deal initiation error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to initiate deal. Please try again.' });
+  } finally {
+    client.release();
   }
 };
 
@@ -124,17 +137,36 @@ const verifyPayment = async (req, res) => {
       { headers: paystackHeaders }
     );
 
-    const { status, metadata, amount } = paystackRes.data.data;
+    const { status, metadata, amount, currency } = paystackRes.data.data;
     if (status !== 'success') return res.status(400).json({ error: 'Payment not successful.' });
 
     const deal_id = metadata?.deal_id;
     if (!deal_id) return res.status(400).json({ error: 'Invalid deal reference.' });
 
-    // Update deal to escrow_held
-    const dealResult = await pool.query(
-      "UPDATE deals SET status='escrow_held', updated_at=NOW() WHERE paystack_reference=$1 RETURNING *",
+    // Verify amount matches expected total (Paystack returns kobo)
+    const dealCheck = await pool.query(
+      'SELECT id, total_paid, status, tenant_id FROM deals WHERE paystack_reference=$1',
       [reference]
     );
+    if (!dealCheck.rows.length) return res.status(404).json({ error: 'Deal not found for this reference.' });
+    const pendingDeal = dealCheck.rows[0];
+
+    if (pendingDeal.status !== 'payment_pending')
+      return res.status(400).json({ error: 'Payment already verified for this deal.' });
+
+    if (req.user && pendingDeal.tenant_id !== req.user.id)
+      return res.status(403).json({ error: 'Not authorised to verify this payment.' });
+
+    const expectedKobo = pendingDeal.total_paid * 100;
+    if (amount !== expectedKobo || (currency && currency !== 'NGN'))
+      return res.status(400).json({ error: 'Payment amount mismatch. Contact support.' });
+
+    // Update deal to escrow_held — only if still payment_pending (idempotent)
+    const dealResult = await pool.query(
+      "UPDATE deals SET status='escrow_held', updated_at=NOW() WHERE paystack_reference=$1 AND status='payment_pending' RETURNING *",
+      [reference]
+    );
+    if (!dealResult.rows.length) return res.status(400).json({ error: 'Payment already verified for this deal.' });
     const deal = dealResult.rows[0];
 
     // Get listing and tenant info
@@ -188,7 +220,7 @@ const verifyPayment = async (req, res) => {
 
     res.json({ message: '✅ Payment verified. Funds in SwiftShield escrow.', deal_id: deal.id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -259,9 +291,9 @@ const confirmMoveIn = async (req, res) => {
       }
     }
 
-    // ── Standard (non-room-share) deal ───────────────────────────────────────
+    // ── Standard (non-room-share) deal — mark movein confirmed, admin releases funds separately
     await pool.query(
-      "UPDATE deals SET status='completed', tenant_confirmed_at=NOW(), funds_released_at=NOW(), updated_at=NOW() WHERE id=$1",
+      "UPDATE deals SET status='completed', tenant_confirmed_at=NOW(), updated_at=NOW() WHERE id=$1",
       [deal.id]
     );
 
@@ -285,7 +317,7 @@ const confirmMoveIn = async (req, res) => {
 
     res.json({ message: '✅ Move-in confirmed. Funds are being released. Thank you for using SouthSwift.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -294,19 +326,29 @@ const raiseDispute = async (req, res) => {
   const { reason } = req.body;
   if (!reason) return res.status(400).json({ error: 'Dispute reason required.' });
   try {
+    const dealCheck = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
+    if (!dealCheck.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    const deal = dealCheck.rows[0];
+
+    if (deal.tenant_id !== req.user.id && deal.agent_id !== req.user.id)
+      return res.status(403).json({ error: 'Only deal parties can raise a dispute.' });
+
+    if (!['escrow_held', 'docs_generated', 'movein_pending'].includes(deal.status))
+      return res.status(400).json({ error: `Cannot dispute a deal with status: ${deal.status}` });
+
     await pool.query(
-      "UPDATE deals SET status='disputed', dispute_reason=$1, updated_at=NOW() WHERE id=$2",
+      "UPDATE deals SET status='disputed', dispute_reason=$1, updated_at=NOW() WHERE id=$2 AND status IN ('escrow_held','docs_generated','movein_pending')",
       [reason, req.params.id]
     );
     // Alert admin
     await sendEmail({
       to: 'ceo@southswift.com.ng',
       subject: '⚠️ ADMIN: Deal Dispute Raised',
-      html: `<p>Deal ${req.params.id} has been disputed.</p><p>Reason: ${reason}</p>`
+      html: `<p>Deal ${req.params.id} has been disputed by ${req.user.email}.</p><p>Reason: ${reason}</p>`
     });
     res.json({ message: 'Dispute raised. SouthSwift team will review within 24 hours.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -323,7 +365,7 @@ const getMyDeals = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -348,7 +390,7 @@ const getDeal = async (req, res) => {
       return res.status(403).json({ error: 'Not authorised to view this deal.' });
     res.json(deal);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 

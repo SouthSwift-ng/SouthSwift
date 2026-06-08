@@ -240,6 +240,7 @@ const uploadPdfToCloudinary = (pdfBuffer, dealId) => {
         public_id:     `swiftdoc_${dealId}`,
         resource_type: 'raw',
         format:        'pdf',
+        type:          'authenticated',
       },
       (err, result) => {
         if (err) reject(err);

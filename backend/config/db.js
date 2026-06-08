@@ -151,18 +151,23 @@ const initDB = async () => {
 
     `);
 
-    // Create admin user if not exists
+    // Create admin user if not exists — password MUST come from env var
     const bcrypt = require('bcryptjs');
     const adminExists = await client.query(
       "SELECT id FROM users WHERE email = 'ceo@southswift.com.ng'"
     );
     if (adminExists.rows.length === 0) {
-      const hash = await bcrypt.hash('SouthSwift@Admin2024', 12);
-      await client.query(`
-        INSERT INTO users (full_name, email, phone, password_hash, role, is_verified)
-        VALUES ('Oladeji Ayeni Joshua', 'ceo@southswift.com.ng', '+2348168185692', $1, 'admin', true)
-      `, [hash]);
-      console.log('✅ Admin user created: ceo@southswift.com.ng');
+      const adminPassword = process.env.ADMIN_SEED_PASSWORD;
+      if (!adminPassword || adminPassword.length < 12) {
+        console.warn('⚠️  ADMIN_SEED_PASSWORD not set or too short (min 12 chars). Skipping admin seed.');
+      } else {
+        const hash = await bcrypt.hash(adminPassword, 12);
+        await client.query(`
+          INSERT INTO users (full_name, email, phone, password_hash, role, is_verified)
+          VALUES ('Oladeji Ayeni Joshua', 'ceo@southswift.com.ng', '+2348168185692', $1, 'admin', true)
+        `, [hash]);
+        console.log('✅ Admin user created: ceo@southswift.com.ng');
+      }
     }
 
     // Add bank detail columns to agent_profiles if not exists

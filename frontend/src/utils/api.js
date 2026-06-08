@@ -86,7 +86,7 @@ export const getDeal       = (id)           => API.get(`/deals/${id}`);
 
 // ── MESSAGES ─────────────────────────────────────────────────────────────────
 export const sendMessage = (dealId, receiverId, content) =>
-  API.post('/messages/send', { deal_id: dealId, receiver_id: receiverId, content });
+  API.post('/messages/send', { deal_id: dealId, content });
 export const getMessages = (dealId) => API.get(`/messages/${dealId}`);
 
 // ── REVIEWS ───────────────────────────────────────────────────────────────────

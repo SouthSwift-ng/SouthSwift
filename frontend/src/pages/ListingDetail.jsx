@@ -119,7 +119,12 @@ export default function ListingDetail() {
         is_room_share:         listing.is_room_share,
       });
       toast.success('Deal initiated! Redirecting to payment...');
-      window.location.href = res.data.payment_url;
+      const paymentUrl = res.data.payment_url;
+      if (paymentUrl && new URL(paymentUrl).hostname.endsWith('paystack.co')) {
+        window.location.href = paymentUrl;
+      } else {
+        toast.error('Invalid payment URL. Please contact support.');
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to initiate deal.');
     }

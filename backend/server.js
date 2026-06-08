@@ -15,12 +15,41 @@ const messageRoutes = require('./routes/messages');
 const reviewRoutes  = require('./routes/reviews');
 const waitlistRoutes= require('./routes/waitlist');
 
+const rateLimit = require('express-rate-limit');
+
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+// ── JWT SECRET GUARD — refuse to start with weak/default secrets ────────────
+const WEAK_SECRETS = ['SouthSwift_JWT_SuperSecret_2026_ChangeInProduction', 'changeme', 'secret', 'jwt_secret'];
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || WEAK_SECRETS.includes(process.env.JWT_SECRET)) {
+  console.error('❌ FATAL: JWT_SECRET is missing, too short (min 32 chars), or a known default. Set a strong random secret.');
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+}
+
 // ── SECURITY & PERFORMANCE ────────────────────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false })); // security headers
-app.use(compression());                             // gzip all responses
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", "'unsafe-inline'"],
+      styleSrc:   ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
+      imgSrc:     ["'self'", "data:", "https:", "blob:"],
+      connectSrc: ["'self'", "https://api.paystack.co", "https://nominatim.openstreetmap.org", "https://*.tile.openstreetmap.org"],
+      fontSrc:    ["'self'", "https://fonts.gstatic.com"],
+      frameSrc:   ["'none'"],
+      objectSrc:  ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+app.use(compression());
+
+// ── RATE LIMITING ─────────────────────────────────────────────────────────────
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/auth',     rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: { error: 'Too many attempts. Please try again later.' } }));
+app.use('/api/waitlist',  rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { error: 'Too many requests. Please try again later.' } }));
+app.use('/api/payments', rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: { error: 'Too many payment requests.' } }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
@@ -31,16 +60,17 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (Postman, mobile apps, server-to-server)
     if (!origin) return callback(null, true);
-    // Allow any vercel.app preview URL for this project
-    if (origin.includes('southswift') || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Allow Vercel preview deployments: must end with .vercel.app and contain 'southswift'
+    if (/^https:\/\/southswift[a-z0-9-]*\.vercel\.app$/.test(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
+
+// ── WEBHOOK ROUTE — must be mounted BEFORE express.json() so raw body is preserved for HMAC ──
+app.use('/api/payments/webhook', require('./routes/webhookRoute'));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

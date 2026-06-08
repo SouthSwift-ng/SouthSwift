@@ -1,10 +1,19 @@
 const { pool } = require('../config/db');
 const { sendEmail } = require('./emailController');
 
+const escapeHtml = (str) => {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+};
+
 // POST /api/waitlist
 const joinWaitlist = async (req, res) => {
   const { email, phone, role, city, state } = req.body;
   if (!email || !role) return res.status(400).json({ error: 'Email and role are required.' });
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) return res.status(400).json({ error: 'Invalid email address.' });
+  if (!['tenant','agent','landlord'].includes(role)) return res.status(400).json({ error: 'Invalid role.' });
 
   try {
     const existing = await pool.query('SELECT id FROM waitlist WHERE email = $1', [email]);
@@ -32,7 +41,7 @@ const joinWaitlist = async (req, res) => {
             rental with escrow payments, verified agents, and auto-generated legal agreements.
           </p>
           <p style="color:#444;font-size:15px;line-height:1.7;">
-            As a <strong>${role}</strong>${city ? ` in <strong>${city}</strong>` : ''},
+            As a <strong>${escapeHtml(role)}</strong>${city ? ` in <strong>${escapeHtml(city)}</strong>` : ''},
             you'll be among the first to access the platform when we launch.
           </p>
           <div style="background:#F0F9F0;border-radius:12px;padding:18px 20px;margin:24px 0;">
@@ -53,12 +62,13 @@ const joinWaitlist = async (req, res) => {
     await sendEmail({
       to: 'ceo@southswift.com.ng',
       subject: `🔔 New Waitlist Signup — ${role} in ${city || 'Unknown'}`,
-      html: `<p>New waitlist signup:</p><ul><li>Email: ${email}</li><li>Phone: ${phone || 'N/A'}</li><li>Role: ${role}</li><li>City: ${city || 'N/A'}</li><li>State: ${state || 'N/A'}</li></ul>`,
+      html: `<p>New waitlist signup:</p><ul><li>Email: ${escapeHtml(email)}</li><li>Phone: ${escapeHtml(phone) || 'N/A'}</li><li>Role: ${escapeHtml(role)}</li><li>City: ${escapeHtml(city) || 'N/A'}</li><li>State: ${escapeHtml(state) || 'N/A'}</li></ul>`,
     });
 
     res.status(201).json({ message: "You're on the waitlist! Check your email for confirmation." });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Waitlist error:', err.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -68,7 +78,8 @@ const getWaitlist = async (req, res) => {
     const result = await pool.query('SELECT * FROM waitlist ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err.message);
+    res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
