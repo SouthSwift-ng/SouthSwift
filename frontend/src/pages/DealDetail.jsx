@@ -99,7 +99,7 @@ export function DealDetail() {
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
               {[['Rent Amount',`₦${Number(deal.rent_amount).toLocaleString()}`],
-                ['SwiftShield Fee (Tenant 2%)',`₦${Number(deal.service_fee_tenant).toLocaleString()}`],
+                ['SwiftShield Fee (Tenant 2.5%)',`₦${Number(deal.service_fee_tenant).toLocaleString()}`],
                 ['Total Paid',`₦${Number(deal.total_paid).toLocaleString()}`],
                 ['Lease Duration',`${deal.lease_duration_months} months`],
                 ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],

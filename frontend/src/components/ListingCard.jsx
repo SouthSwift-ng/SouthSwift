@@ -4,6 +4,8 @@ import { Shield, MapPin, Bed, Bath, CheckCircle } from 'lucide-react';
 const G    = '#1B4332';
 const GOLD = '#C8963C';
 
+const fmt = (n) => { const num = Number(n); return isNaN(num) ? '0' : num.toLocaleString(); };
+
 export default function ListingCard({ listing, distanceKm }) {
   const {
     id, title, city, state, rent_price, rent_period,
@@ -36,7 +38,7 @@ export default function ListingCard({ listing, distanceKm }) {
       {/* Body */}
       <div style={s.body}>
         <div style={s.price}>
-          ₦{Number(rent_price).toLocaleString()}
+          ₦{fmt(rent_price)}
           <span style={s.period}>/{rent_period === 'monthly' ? 'mo' : 'yr'}</span>
         </div>
         <div style={s.title}>{title}</div>

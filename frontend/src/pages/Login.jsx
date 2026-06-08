@@ -101,9 +101,12 @@ export function Register() {
             ))}
           </select>
           <label style={s.label}>Password</label>
-          <input style={s.input} type="password" value={form.password} placeholder="Min 8 characters" required
+          <input style={s.input} type="password" value={form.password} placeholder="Min 8 characters" required minLength={8}
             onChange={e=>setForm(f=>({...f,password:e.target.value}))} />
-          <button style={{...s.btn, opacity:loading?0.7:1}} disabled={loading}>
+          {form.password && form.password.length < 8 && (
+            <p style={{fontSize:11,color:'#EF4444',margin:'4px 0 0'}}>Password must be at least 8 characters</p>
+          )}
+          <button style={{...s.btn, opacity:loading?0.7:1}} disabled={loading || form.password.length < 8}>
             {loading ? 'Creating Account...' : 'Create Account — Free'}
           </button>
         </form>

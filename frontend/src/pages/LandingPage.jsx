@@ -35,7 +35,6 @@ const CLUSTERS = [
   { label:'77',   lat:4.85,  lng:2.80  }, // Lagos South
 ];
 
-const SLACK_WEBHOOK = process.env.REACT_APP_SLACK_WEBHOOK_URL || '';
 const G    = '#1B4332';
 const GOLD = '#C8963C';
 const STATES = ['Lagos','Abuja','Rivers','Oyo','Kwara','Osun','Ekiti','Enugu','Kano','Kaduna','Ogun','Delta','Ondo','Kogi','Plateau'];
@@ -57,22 +56,6 @@ export default function LandingPage() {
     setLoading(true);
     try {
       await joinWaitlist(form);
-      if (SLACK_WEBHOOK) {
-        fetch(SLACK_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: [
-              `🔔 *New SouthSwift Waitlist Signup*`,
-              `*Role:* ${form.role.charAt(0).toUpperCase() + form.role.slice(1)}`,
-              `*Email:* ${form.email}`,
-              `*Phone:* ${form.phone || 'N/A'}`,
-              `*City:* ${form.city || 'N/A'}`,
-              `*State:* ${form.state || 'N/A'}`,
-            ].join('\n'),
-          }),
-        }).catch(() => {});
-      }
       setSubmitted(true);
       toast.success("You're on the waitlist!");
     } catch (err) {

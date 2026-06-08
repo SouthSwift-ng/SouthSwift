@@ -118,7 +118,10 @@ export default function Home() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchListings({ page: 1 }); }, [filters, viewMode]);
+  useEffect(() => {
+    const timer = setTimeout(() => fetchListings({ page: 1 }), 300);
+    return () => clearTimeout(timer);
+  }, [filters, viewMode]);
 
   return (
     <div style={s.page}>

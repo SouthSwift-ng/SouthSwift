@@ -1,0 +1,52 @@
+/* SouthSwift — Global styles (responsive breakpoints + smooth UX) */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #F8FAF8;
+}
+
+/* Navbar responsive: hide desktop links on mobile, show hamburger */
+@media (max-width: 768px) {
+  .ss-desktop { display: none !important; }
+  .ss-hamburger { display: flex !important; }
+}
+@media (min-width: 769px) {
+  .ss-hamburger { display: none !important; }
+}
+
+/* Smooth transitions on cards */
+a[style*="borderRadius"] { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+a[style*="borderRadius"]:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(0,0,0,0.1) !important; }
+
+/* Button hover states */
+button { transition: opacity 0.15s ease; }
+button:hover:not(:disabled) { opacity: 0.9; }
+button:active:not(:disabled) { transform: scale(0.98); }
+
+/* Input focus */
+input:focus, select:focus, textarea:focus {
+  border-color: #1B4332 !important;
+  box-shadow: 0 0 0 2px rgba(27,67,50,0.15);
+}
+
+/* Smooth page load */
+#root { animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Toast improvements */
+[data-sonner-toast] { font-family: Arial, sans-serif !important; }
+
+/* Responsive grid breakpoints */
+@media (max-width: 640px) {
+  .ss-hero-title { font-size: 28px !important; }
+}

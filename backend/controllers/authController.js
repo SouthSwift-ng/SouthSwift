@@ -12,6 +12,9 @@ const register = async (req, res) => {
   if (!full_name || !email || !phone || !password)
     return res.status(400).json({ error: 'All fields are required.' });
 
+  if (password.length < 8)
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+
   const allowedRoles = ['tenant','landlord','agent'];
   const userRole = allowedRoles.includes(role) ? role : 'tenant';
 

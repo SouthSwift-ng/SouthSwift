@@ -42,18 +42,21 @@ function ListingMap({ address, city, state, lat, lng }) {
 
   useEffect(() => {
     if (coords) return;
+    let cancelled = false;
     const query = encodeURIComponent(`${address}, ${city}, ${state}, Nigeria`);
     fetch(`https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`, {
       headers: { 'Accept-Language': 'en' }
     })
       .then(r => r.json())
       .then(data => {
+        if (cancelled) return;
         if (data && data.length > 0) {
           setCoords([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
         } else { setMapError(true); }
       })
-      .catch(() => setMapError(true));
-  }, []);
+      .catch(() => { if (!cancelled) setMapError(true); });
+    return () => { cancelled = true; };
+  }, [address, city, state, coords]);
 
   if (mapError || (!coords && !lat && !lng)) return (
     <div style={ms.placeholder}><MapPin size={20} color="#CCC" /><span>Location unavailable</span></div>
@@ -183,7 +186,7 @@ export default function ListingDetail() {
             {amenities.length > 0 && (
               <div style={s.card}>
                 <h3 style={s.cardTitle}>Amenities</h3>
-                <div style={s.amenGrid}>{amenities.map((a,i) => <span key={i} style={s.amenTag}>&#10003; {a}</span>)}</div>
+                <div style={s.amenGrid}>{amenities.map(a => <span key={a} style={s.amenTag}>&#10003; {a}</span>)}</div>
               </div>
             )}
 

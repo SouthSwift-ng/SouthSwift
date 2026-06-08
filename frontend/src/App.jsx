@@ -50,7 +50,7 @@ export default function App() {
     const token = localStorage.getItem('ss_token');
     if (token) {
       getMe().then(r => { setUser(r.data); setLoading(false); })
-              .catch(()  => { localStorage.clear(); setLoading(false); });
+              .catch(()  => { localStorage.removeItem('ss_token'); localStorage.removeItem('ss_user'); setLoading(false); });
     } else {
       setLoading(false);
     }
@@ -62,7 +62,8 @@ export default function App() {
     setUser(userData);
   };
   const logout = () => {
-    localStorage.clear();
+    localStorage.removeItem('ss_token');
+    localStorage.removeItem('ss_user');
     setUser(null);
   };
 
