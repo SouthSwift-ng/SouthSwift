@@ -427,19 +427,22 @@ export function CreateListing() {
           )}
 
           {/* Description */}
-          <div>
+          <div style={{ gridColumn: '1 / -1' }}>
             <label style={ps.label}>Description</label>
-            <input style={ps.input} type="text" value={form.description}
-              placeholder="Spacious apartment with 24hr power..."
+            <textarea style={{ ...ps.input, minHeight: 100, resize: 'vertical' }} value={form.description}
+              placeholder="Describe the property in detail — size, condition, neighbourhood, nearby landmarks, access to utilities..."
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}/>
           </div>
 
           {/* Amenities */}
-          <div>
-            <label style={ps.label}>Amenities (comma separated)</label>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={ps.label}>Amenities</label>
             <input style={ps.input} type="text" value={form.amenities}
-              placeholder="Generator, Swimming Pool, Gym"
+              placeholder="e.g. Generator, Swimming Pool, Gym, Security, Parking"
               onChange={e => setForm(f => ({ ...f, amenities: e.target.value }))}/>
+            <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+              Separate each amenity with a comma. Avoid special characters like &amp; or /
+            </p>
           </div>
 
           {/* Photos */}

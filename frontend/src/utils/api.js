@@ -58,6 +58,8 @@ export const createListing  = (data)   => {
   Object.entries(data).forEach(([k, v]) => {
     if (k === 'images') {
       if (Array.isArray(v)) v.forEach(file => fd.append('images', file));
+    } else if (k === 'amenities' && Array.isArray(v)) {
+      v.forEach(item => fd.append('amenities[]', item)); // correct — sends each item separately
     } else if (Array.isArray(v)) {
       fd.append(k, JSON.stringify(v));
     } else if (v !== undefined && v !== null) {

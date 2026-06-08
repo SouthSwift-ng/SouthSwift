@@ -113,12 +113,26 @@ const getListing = async (req, res) => {
 const createListing = async (req, res) => {
   const {
     title, description, property_type, bedrooms, bathrooms,
-    rent_price, rent_period, address, city, state, amenities,
+    rent_price, rent_period, address, city, state,
     latitude, longitude
   } = req.body;
 
   if (!title || !rent_price || !address || !city || !state)
     return res.status(400).json({ error: 'Title, price, address, city, and state are required.' });
+
+  // Parse amenities robustly: prefer amenities[] (each item sent separately),
+  // fall back to a comma-separated string. Avoids "malformed array literal" errors.
+  let amenities = [];
+  if (req.body['amenities[]']) {
+    amenities = Array.isArray(req.body['amenities[]'])
+      ? req.body['amenities[]']
+      : [req.body['amenities[]']];
+  } else if (req.body.amenities) {
+    // fallback: if sent as comma-separated string
+    amenities = typeof req.body.amenities === 'string'
+      ? req.body.amenities.split(',').map(a => a.trim()).filter(Boolean)
+      : req.body.amenities;
+  }
 
   const is_room_share = req.body.is_room_share === 'true' || req.body.is_room_share === true;
   const room_share_price_per_person = req.body.room_share_price_per_person || null;
@@ -146,7 +160,7 @@ const createListing = async (req, res) => {
        RETURNING *`,
       [req.user.id, title, description, property_type||'apartment',
        bedrooms||1, bathrooms||1, rent_price, rent_period||'yearly',
-       address, city, state, amenities||[], images, latitude||null, longitude||null,
+       address, city, state, amenities, images, latitude||null, longitude||null,
        is_room_share, room_share_price_per_person, room_share_slots]
     );
     res.status(201).json(result.rows[0]);
