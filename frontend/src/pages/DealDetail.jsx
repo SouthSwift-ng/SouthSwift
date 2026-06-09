@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  getDeal, confirmMoveIn, raiseDispute, sendMessage, getMessages,
+  getDeal, confirmMoveIn, raiseDispute, cancelDeal, sendMessage, getMessages,
   createListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
   getAgent, submitReview, getAgentReviews, getWaitlist
@@ -25,6 +25,8 @@ export function DealDetail() {
   const [msgLoading, setML]     = useState(false);
   const [reviewForm, setRF] = useState({ rating: 5, comment: '' });
   const [reviewed, setReviewed] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const fetchMessages = () =>
     getMessages(id).then(r => setMessages(r.data)).catch(() => {});
@@ -74,10 +76,22 @@ export function DealDetail() {
     } catch(err) { toast.error(err.response?.data?.error || 'Failed to submit review.'); }
   };
 
+  const handleCancel = async () => {
+    if (!cancelReason) { toast.error('Please select a cancellation reason.'); return; }
+    try {
+      await cancelDeal(id, cancelReason);
+      toast.success('Deal cancelled.');
+      setShowCancelConfirm(false);
+      getDeal(id).then(r=>setDeal(r.data));
+    } catch(err) { toast.error(err.response?.data?.error||'Failed to cancel deal.'); }
+  };
+
   if (loading) return <div style={ps.loading}>🛡️ Loading deal...</div>;
   if (!deal)   return <div style={ps.loading}>Deal not found.</div>;
 
   const isTenant = deal.tenant_id === user?.id;
+  const isParty = deal.tenant_id === user?.id || deal.agent_id === user?.id;
+  const canCancel = isParty && ['initiated','payment_pending'].includes(deal.status);
   const canConfirm = isTenant && ['escrow_held','docs_generated'].includes(deal.status);
 
   return (
@@ -89,8 +103,10 @@ export function DealDetail() {
             <h1 style={ps.dealTitle}>{deal.listing_title}</h1>
             <div style={ps.dealSub}>{deal.city}, {deal.state}</div>
           </div>
-          <div style={{...ps.statusBig, background:deal.status==='completed'?'#DCFCE7':'#FEF3C7', color:deal.status==='completed'?'#166534':'#92400E'}}>
-            {deal.status.replace(/_/g,' ').toUpperCase()}
+          <div style={{...ps.statusBig,
+            background:deal.status==='completed'?'#DCFCE7':deal.status==='cancelled'?'#FEE2E2':deal.status==='disputed'?'#FEE2E2':'#FEF3C7',
+            color:deal.status==='completed'?'#166534':deal.status==='cancelled'?'#DC2626':deal.status==='disputed'?'#DC2626':'#92400E'}}>
+            {deal.status === 'initiated' || deal.status === 'payment_pending' ? 'AWAITING PAYMENT' : deal.status.replace(/_/g,' ').toUpperCase()}
           </div>
         </div>
 
@@ -99,12 +115,15 @@ export function DealDetail() {
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
               {[['Rent Amount',`₦${Number(deal.rent_amount).toLocaleString()}`],
-                ['SwiftShield Fee (Tenant 2.5%)',`₦${Number(deal.service_fee_tenant).toLocaleString()}`],
-                ['Total Paid',`₦${Number(deal.total_paid).toLocaleString()}`],
+                ['SwiftShield Fee — Tenant (2.5%)',`₦${Number(deal.service_fee_tenant).toLocaleString()}`],
+                ['SwiftShield Fee — Landlord (2.5%)',`₦${Number(deal.service_fee_landlord).toLocaleString()}`],
+                ['Total Platform Fee (5%)',`₦${(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord)).toLocaleString()}`],
+                ['Tenant Total',`₦${Number(deal.total_paid).toLocaleString()}`],
+                ['Landlord Disbursement',`₦${(Number(deal.rent_amount)-Number(deal.service_fee_landlord)).toLocaleString()}`],
                 ['Lease Duration',`${deal.lease_duration_months} months`],
                 ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
                 ['Deal ID', deal.id.slice(0,8)+'...'],
-                ['Paystack Ref', deal.paystack_reference||'Pending'],
+                ['Paystack Ref', deal.paystack_reference||'Awaiting Payment'],
               ].map(([k,v])=>(
                 <div key={k} style={ps.row}>
                   <span style={ps.rowK}>{k}</span>
@@ -163,7 +182,37 @@ export function DealDetail() {
               </div>
             )}
 
-            {isTenant && !['completed','disputed','cancelled'].includes(deal.status) && (
+            {canCancel && (
+              <div style={{...ps.actionCard, background:'#FFF7ED', border:'1px solid #FED7AA'}}>
+                {!showCancelConfirm ? (
+                  <>
+                    <h3 style={{...ps.cardTitle, color:'#9A3412'}}>Cancel Deal</h3>
+                    <p style={{fontSize:12.5, color:'#9A3412', marginBottom:14}}>No payment has been made. You can cancel this deal freely.</p>
+                    <button onClick={()=>setShowCancelConfirm(true)} style={{...ps.disputeBtn, background:'#EA580C'}}>Cancel Deal</button>
+                  </>
+                ) : (
+                  <>
+                    <h3 style={{...ps.cardTitle, color:'#9A3412'}}>Are you sure you want to cancel this deal?</h3>
+                    <p style={{fontSize:12, color:'#9A3412', marginBottom:10}}>This action cannot be undone.</p>
+                    <label style={{display:'block',fontSize:12,fontWeight:700,color:'#444',marginBottom:5}}>Reason for cancellation *</label>
+                    <select style={{width:'100%',border:'1px solid #FED7AA',borderRadius:8,padding:'10px 12px',fontSize:13,boxSizing:'border-box',marginBottom:10}} value={cancelReason} onChange={e=>setCancelReason(e.target.value)}>
+                      <option value="">Select a reason</option>
+                      <option value="Property no longer available">Property no longer available</option>
+                      <option value="Changed my mind">Changed my mind</option>
+                      <option value="Found alternative property">Found alternative property</option>
+                      <option value="Landlord unresponsive">Landlord unresponsive</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <div style={{display:'flex',gap:8}}>
+                      <button onClick={()=>setShowCancelConfirm(false)} style={{flex:1,background:'#F3F4F6',color:'#444',border:'none',padding:'11px',borderRadius:10,cursor:'pointer',fontWeight:700,fontSize:13}}>Go Back</button>
+                      <button onClick={handleCancel} disabled={!cancelReason} style={{flex:1,background:'#DC2626',color:'white',border:'none',padding:'11px',borderRadius:10,cursor:'pointer',fontWeight:700,fontSize:13,opacity:cancelReason?1:0.5}}>Confirm Cancellation</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {isTenant && !['completed','disputed','cancelled'].includes(deal.status) && !canCancel && (
               <div style={ps.disputeCard}>
                 <h3 style={{...ps.cardTitle, color:'#DC2626'}}><AlertTriangle size={15}/> Raise a Dispute</h3>
                 <textarea style={ps.textarea} placeholder="Describe the issue in detail..." value={reason} onChange={e=>setR(e.target.value)} />

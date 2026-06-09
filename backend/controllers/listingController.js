@@ -122,19 +122,17 @@ const createListing = async (req, res) => {
   if (!title || !rent_price || !address || !city || !state)
     return res.status(400).json({ error: 'Title, price, address, city, and state are required.' });
 
-  // Parse amenities robustly: prefer amenities[] (each item sent separately),
-  // fall back to a comma-separated string. Avoids "malformed array literal" errors.
   let amenities = [];
   if (req.body['amenities[]']) {
     amenities = Array.isArray(req.body['amenities[]'])
       ? req.body['amenities[]']
       : [req.body['amenities[]']];
   } else if (req.body.amenities) {
-    // fallback: if sent as comma-separated string
     amenities = typeof req.body.amenities === 'string'
       ? req.body.amenities.split(',').map(a => a.trim()).filter(Boolean)
       : req.body.amenities;
   }
+  amenities = amenities.map(a => a.replace(/&/g, 'and').replace(/[^a-zA-Z0-9\s,\-]/g, '').trim()).filter(Boolean);
 
   const is_room_share = req.body.is_room_share === 'true' || req.body.is_room_share === true;
   const room_share_price_per_person = req.body.room_share_price_per_person || null;

@@ -94,9 +94,10 @@ export default function ListingDetail() {
   const [listing, setL]       = useState(null);
   const [loading, setLoad]    = useState(true);
   const [imgIdx, setImgIdx]   = useState(0);
-  const [form, setForm]       = useState({ lease_duration_months: 12, move_in_date: '' });
+  const [form, setForm]       = useState({ lease_duration_months: '', move_in_date: '' });
   const [dealing, setDealing] = useState(false);
   const [roomShare, setRoomShare] = useState(null);
+  const [formErrors, setFormErrors] = useState({});
 
   useEffect(() => {
     getListing(id)
@@ -112,7 +113,11 @@ export default function ListingDetail() {
 
   const handleDeal = async () => {
     if (!user) { navigate('/login'); return; }
-    if (!form.move_in_date) { toast.error('Please select a move-in date.'); return; }
+    const errors = {};
+    if (!form.move_in_date) errors.move_in_date = 'Move-in date is required.';
+    if (!form.lease_duration_months) errors.lease_duration_months = 'Lease duration is required.';
+    if (Object.keys(errors).length) { setFormErrors(errors); return; }
+    setFormErrors({});
     setDealing(true);
     try {
       const res = await initiateDeal({
@@ -240,32 +245,37 @@ export default function ListingDetail() {
               )}
 
               <div style={s.feeBreakdown}>
-                {listing.is_room_share ? (
-                  <>
-                    <div style={s.feeRow}><span>Per Person</span><span style={{fontWeight:600}}>&#8358;{Number(listing.room_share_price_per_person).toLocaleString()}</span></div>
-                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.room_share_price_per_person*0.025).toLocaleString()}</span></div>
-                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.room_share_price_per_person*1.025).toLocaleString()}</span></div>
-                  </>
-                ) : (
-                  <>
-                    <div style={s.feeRow}><span>Rent</span><span style={{fontWeight:600}}>&#8358;{Number(listing.rent_price).toLocaleString()}</span></div>
-                    <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{Math.round(listing.rent_price*0.025).toLocaleString()}</span></div>
-                    <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Total</span><span style={{fontWeight:800,color:G}}>&#8358;{Math.round(listing.rent_price*1.025).toLocaleString()}</span></div>
-                  </>
-                )}
+                {(() => {
+                  const rent = listing.is_room_share ? Number(listing.room_share_price_per_person) : Number(listing.rent_price);
+                  const tenantFee = Math.round(rent * 0.025);
+                  const landlordFee = Math.round(rent * 0.025);
+                  return (
+                    <>
+                      <div style={s.feeRow}><span>{listing.is_room_share ? 'Per Person' : 'Rent'}</span><span style={{fontWeight:600}}>&#8358;{rent.toLocaleString()}</span></div>
+                      <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Tenant (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{tenantFee.toLocaleString()}</span></div>
+                      <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Landlord (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{landlordFee.toLocaleString()}</span></div>
+                      <div style={s.feeRow}><span style={{fontSize:11,color:'#888'}}>Total Platform Fee (5%)</span><span style={{fontSize:11,color:'#888'}}>&#8358;{(tenantFee+landlordFee).toLocaleString()}</span></div>
+                      <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{(rent+tenantFee).toLocaleString()}</span></div>
+                      <div style={s.feeRow}><span style={{fontSize:11,color:'#666'}}>Landlord Receives</span><span style={{fontSize:11,color:'#666'}}>&#8358;{(rent-landlordFee).toLocaleString()}</span></div>
+                    </>
+                  );
+                })()}
               </div>
 
-              <label style={s.label}>Move-in Date</label>
-              <input type="date" style={s.input} value={form.move_in_date}
+              <label style={s.label}>Move-in Date *</label>
+              <input type="date" style={{...s.input, borderColor: formErrors.move_in_date ? '#DC2626' : '#DDD'}} value={form.move_in_date}
                 min={new Date().toISOString().split('T')[0]}
-                onChange={e => setForm(f=>({...f,move_in_date:e.target.value}))}/>
-              <label style={s.label}>Lease Duration</label>
-              <select style={s.input} value={form.lease_duration_months}
-                onChange={e => setForm(f=>({...f,lease_duration_months:Number(e.target.value)}))}>
+                onChange={e => { setForm(f=>({...f,move_in_date:e.target.value})); setFormErrors(fe=>({...fe,move_in_date:''})); }}/>
+              {formErrors.move_in_date && <span style={s.fieldError}>{formErrors.move_in_date}</span>}
+              <label style={s.label}>Lease Duration *</label>
+              <select style={{...s.input, borderColor: formErrors.lease_duration_months ? '#DC2626' : '#DDD'}} value={form.lease_duration_months}
+                onChange={e => { setForm(f=>({...f,lease_duration_months:Number(e.target.value)})); setFormErrors(fe=>({...fe,lease_duration_months:''})); }}>
+                <option value="">Select duration</option>
                 {[6,12,18,24].map(m=><option key={m} value={m}>{m} months</option>)}
               </select>
-              <button onClick={handleDeal} disabled={dealing||slotsFull}
-                style={{...s.dealBtn,opacity:(dealing||slotsFull)?0.5:1}}>
+              {formErrors.lease_duration_months && <span style={s.fieldError}>{formErrors.lease_duration_months}</span>}
+              <button onClick={handleDeal} disabled={dealing||slotsFull||!form.move_in_date||!form.lease_duration_months}
+                style={{...s.dealBtn,opacity:(dealing||slotsFull||!form.move_in_date||!form.lease_duration_months)?0.5:1}}>
                 {slotsFull ? 'All Slots Filled' : dealing ? 'Initiating...' :
                   listing.is_room_share
                     ? `Claim Your Slot - N${Math.round(Number(listing.room_share_price_per_person)*1.025).toLocaleString()}`
@@ -333,4 +343,5 @@ const s = {
   dealBtn:     { width:'100%', background:G, color:'white', border:'none', padding:'14px', borderRadius:12, cursor:'pointer', fontWeight:800, fontSize:15, marginTop:16 },
   trustRow:    { display:'flex', flexWrap:'wrap', gap:6, marginTop:14 },
   trustTag:    { fontSize:10, color:'#666', background:'#F3F4F6', padding:'3px 8px', borderRadius:10 },
+  fieldError:  { display:'block', fontSize:11, color:'#DC2626', marginTop:4 },
 };

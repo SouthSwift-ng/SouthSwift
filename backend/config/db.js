@@ -197,6 +197,13 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS room_share_slot_number INTEGER;
     `);
 
+    // Add cancellation columns to deals if not exists
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+        ADD COLUMN IF NOT EXISTS cancelled_by UUID REFERENCES users(id);
+    `);
+
     // Enable RLS on all public tables — blocks direct PostgREST access;
     // the Express backend connects as postgres superuser and is unaffected.
     await client.query(`

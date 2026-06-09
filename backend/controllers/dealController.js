@@ -39,11 +39,11 @@ const initiateDeal = async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'All room share slots are filled for this listing.' });
       }
-      rent_amount = listing.room_share_price_per_person;
+      rent_amount = Number(listing.room_share_price_per_person);
       is_room_share_deal = true;
       room_share_slot_number = listing.room_share_slots_filled + 1;
     } else {
-      rent_amount = listing.rent_price;
+      rent_amount = Number(listing.rent_price);
     }
 
     // Calculate fees — 2.5% from tenant, 2.5% from agent (5% total split equally)
@@ -394,4 +394,51 @@ const getDeal = async (req, res) => {
   }
 };
 
-module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, getMyDeals, getDeal };
+// POST /api/deals/:id/cancel — cancel a deal before payment
+const cancelDeal = async (req, res) => {
+  const { reason } = req.body;
+  if (!reason) return res.status(400).json({ error: 'Cancellation reason is required.' });
+
+  try {
+    const dealResult = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
+    if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    const deal = dealResult.rows[0];
+
+    if (deal.tenant_id !== req.user.id && deal.agent_id !== req.user.id)
+      return res.status(403).json({ error: 'Only deal parties can cancel a deal.' });
+
+    if (!['initiated', 'payment_pending'].includes(deal.status))
+      return res.status(400).json({ error: 'Deals can only be cancelled before payment is completed. After payment, please raise a dispute through SwiftConnect.' });
+
+    await pool.query(
+      "UPDATE deals SET status='cancelled', cancellation_reason=$1, cancelled_by=$2, updated_at=NOW() WHERE id=$3",
+      [reason, req.user.id, req.params.id]
+    );
+
+    const tenantRes = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.tenant_id]);
+    const agentRes  = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.agent_id]);
+    const tenant = tenantRes.rows[0];
+    const agent  = agentRes.rows[0];
+
+    const cancelledByName = req.user.id === deal.tenant_id ? tenant.full_name : agent.full_name;
+    const emailBody = `<h2>Deal Cancelled</h2><p>Deal for listing has been cancelled by ${cancelledByName}.</p><p><strong>Reason:</strong> ${reason}</p>`;
+
+    await sendEmail({ to: tenant.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
+    await sendEmail({ to: agent.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
+
+    // If room share, decrement the slot
+    if (deal.is_room_share_deal) {
+      await pool.query(
+        'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
+        [deal.listing_id]
+      );
+    }
+
+    res.json({ message: 'Deal cancelled successfully.' });
+  } catch (err) {
+    console.error('Cancel deal error:', err.message);
+    res.status(500).json({ error: 'Something went wrong.' });
+  }
+};
+
+module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal };

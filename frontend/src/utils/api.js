@@ -81,6 +81,7 @@ export const initiateDeal  = (data)         => API.post('/deals/initiate', data)
 export const verifyPayment = (reference)    => API.get(`/payments/verify/${reference}`);
 export const confirmMoveIn = (dealId)       => API.post(`/deals/${dealId}/confirm-movein`);
 export const raiseDispute  = (dealId, reason) => API.post(`/deals/${dealId}/dispute`, { reason });
+export const cancelDeal    = (dealId, reason) => API.post(`/deals/${dealId}/cancel`, { reason });
 export const getMyDeals    = ()             => API.get('/deals/my');
 export const getDeal       = (id)           => API.get(`/deals/${id}`);
 
