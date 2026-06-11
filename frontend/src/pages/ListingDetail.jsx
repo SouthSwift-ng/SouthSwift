@@ -98,13 +98,18 @@ export default function ListingDetail() {
   const [dealing, setDealing] = useState(false);
   const [roomShare, setRoomShare] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const [dealMode, setDealMode] = useState('standard'); // 'standard' | 'room_share'
 
   useEffect(() => {
     getListing(id)
       .then(r => {
         setL(r.data);
         if (r.data.is_room_share) {
-          getRoomShareStatus(id).then(rs => setRoomShare(rs.data)).catch(() => {});
+          getRoomShareStatus(id).then(rs => {
+            setRoomShare(rs.data);
+            // Once anyone holds a slot the whole property can't be rented outright
+            if (parseInt(rs.data.room_share_slots_filled) > 0) setDealMode('room_share');
+          }).catch(() => {});
         }
       })
       .catch(() => toast.error('Listing not found.'))
@@ -124,7 +129,7 @@ export default function ListingDetail() {
         listing_id:            id,
         lease_duration_months: form.lease_duration_months,
         move_in_date:          form.move_in_date,
-        is_room_share:         listing.is_room_share,
+        is_room_share:         !!listing.is_room_share && dealMode === 'room_share',
       });
       toast.success('Deal initiated! Redirecting to payment...');
       const paymentUrl = res.data.payment_url;
@@ -134,6 +139,12 @@ export default function ListingDetail() {
         toast.error('Invalid payment URL. Please contact support.');
       }
     } catch (err) {
+      if (!err.response) {
+        // Timed out / no response — the deal may have been created server-side.
+        // Keep the button disabled so a blind retry can't double-submit.
+        toast.error('Network timeout — your deal may still have been created. Please check "My Deals" in your dashboard before trying again.', { duration: 8000 });
+        return;
+      }
       toast.error(err.response?.data?.error || 'Failed to initiate deal.');
     }
     setDealing(false);
@@ -144,8 +155,15 @@ export default function ListingDetail() {
 
   const images    = listing.images?.length ? listing.images : ['https://via.placeholder.com/800x480?text=SouthSwift'];
   const amenities = Array.isArray(listing.amenities) ? listing.amenities : [];
+  const slotsFilled = parseInt(roomShare?.room_share_slots_filled) || 0;
   const slotsFull = listing.is_room_share && roomShare &&
-    parseInt(roomShare.room_share_slots_filled) >= parseInt(roomShare.room_share_slots);
+    slotsFilled >= parseInt(roomShare.room_share_slots);
+  const isRoomShareDeal = !!listing.is_room_share && dealMode === 'room_share';
+  // Same fallback as the backend: agent never set a per-person price → even split of rent
+  const perPersonPrice = Number(listing.room_share_price_per_person) ||
+    Math.round(Number(listing.rent_price) / Math.max(parseInt(listing.room_share_slots) || 2, 1));
+  const dealRent   = isRoomShareDeal ? perPersonPrice : Number(listing.rent_price);
+  const dealBlocked = isRoomShareDeal ? slotsFull : (listing.is_room_share && slotsFilled > 0);
 
   return (
     <div style={s.page}>
@@ -225,11 +243,39 @@ export default function ListingDetail() {
           <div style={s.right}>
             <div style={s.bookCard}>
               <div style={s.bookHeader}><Shield size={18} color={GOLD}/>
-                <span style={s.bookTitle}>{listing.is_room_share ? 'Join Room Share Deal' : 'Start SwiftShield Deal'}</span>
+                <span style={s.bookTitle}>{isRoomShareDeal ? 'Join Room Share Deal' : 'Start SwiftShield Deal'}</span>
               </div>
               <p style={s.bookDesc}>Your payment is held in escrow and only released when you confirm move-in. 100% protected.</p>
 
-              {listing.is_room_share && roomShare && (
+              {listing.is_room_share && (
+                <div style={{marginBottom:16}}>
+                  <div style={{display:'flex', gap:8}}>
+                    {[['standard','Rent Entire Property'],['room_share','Join Room Share']].map(([mode,label]) => {
+                      const active   = dealMode === mode;
+                      const disabled = mode === 'standard' && slotsFilled > 0;
+                      return (
+                        <button key={mode} type="button" disabled={disabled}
+                          onClick={() => setDealMode(mode)}
+                          style={{flex:1, padding:'9px 6px', borderRadius:8, fontSize:12, fontWeight:700,
+                                  cursor: disabled ? 'not-allowed' : 'pointer',
+                                  border: active ? `2px solid ${G}` : '1px solid #DDD',
+                                  background: active ? '#F0F9F0' : 'white',
+                                  color: active ? G : '#666',
+                                  opacity: disabled ? 0.45 : 1}}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {slotsFilled > 0 && (
+                    <p style={{fontSize:11, color:'#888', margin:'6px 0 0'}}>
+                      Room share tenants have already joined, so this property can only be rented as a room share.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {isRoomShareDeal && roomShare && (
                 <div style={{background:'#F0F9F0',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
                   <div style={{fontWeight:700,fontSize:13,color:G,marginBottom:10}}>Room Share - {roomShare.room_share_slots} Slots</div>
                   <div style={{display:'flex',gap:8,marginBottom:8}}>
@@ -246,12 +292,12 @@ export default function ListingDetail() {
 
               <div style={s.feeBreakdown}>
                 {(() => {
-                  const rent = listing.is_room_share ? Number(listing.room_share_price_per_person) : Number(listing.rent_price);
+                  const rent = dealRent;
                   const tenantFee = Math.round(rent * 0.025);
                   const landlordFee = Math.round(rent * 0.025);
                   return (
                     <>
-                      <div style={s.feeRow}><span>{listing.is_room_share ? 'Per Person' : 'Rent'}</span><span style={{fontWeight:600}}>&#8358;{rent.toLocaleString()}</span></div>
+                      <div style={s.feeRow}><span>{isRoomShareDeal ? 'Per Person' : 'Rent'}</span><span style={{fontWeight:600}}>&#8358;{rent.toLocaleString()}</span></div>
                       <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Tenant (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{tenantFee.toLocaleString()}</span></div>
                       <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Landlord (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{landlordFee.toLocaleString()}</span></div>
                       <div style={s.feeRow}><span style={{fontSize:11,color:'#888'}}>Total Platform Fee (5%)</span><span style={{fontSize:11,color:'#888'}}>&#8358;{(tenantFee+landlordFee).toLocaleString()}</span></div>
@@ -274,11 +320,11 @@ export default function ListingDetail() {
                 {[6,12,18,24].map(m=><option key={m} value={m}>{m} months</option>)}
               </select>
               {formErrors.lease_duration_months && <span style={s.fieldError}>{formErrors.lease_duration_months}</span>}
-              <button onClick={handleDeal} disabled={dealing||slotsFull||!form.move_in_date||!form.lease_duration_months}
-                style={{...s.dealBtn,opacity:(dealing||slotsFull||!form.move_in_date||!form.lease_duration_months)?0.5:1}}>
-                {slotsFull ? 'All Slots Filled' : dealing ? 'Initiating...' :
-                  listing.is_room_share
-                    ? `Claim Your Slot - N${Math.round(Number(listing.room_share_price_per_person)*1.025).toLocaleString()}`
+              <button onClick={handleDeal} disabled={dealing||dealBlocked||!form.move_in_date||!form.lease_duration_months}
+                style={{...s.dealBtn,opacity:(dealing||dealBlocked||!form.move_in_date||!form.lease_duration_months)?0.5:1}}>
+                {dealBlocked ? (isRoomShareDeal ? 'All Slots Filled' : 'Room Share Only') : dealing ? 'Initiating...' :
+                  isRoomShareDeal
+                    ? `Claim Your Slot - ₦${(dealRent + Math.round(dealRent*0.025)).toLocaleString()}`
                     : 'Initiate SwiftShield Deal'}
               </button>
               <div style={s.trustRow}>

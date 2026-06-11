@@ -361,6 +361,10 @@ export function CreateListing() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (form.is_room_share && !(Number(form.room_share_price_per_person) > 0)) {
+      toast.error('Please set a price per person for the room share.');
+      return;
+    }
     setL(true);
     try {
       const data = {

@@ -89,7 +89,7 @@ const initDB = async () => {
         status            VARCHAR(30) DEFAULT 'initiated'
                           CHECK (status IN (
                             'initiated','payment_pending','escrow_held',
-                            'docs_generated','movein_pending','completed','disputed','cancelled'
+                            'docs_generated','movein_pending','completed','disputed','cancelled','archived'
                           )),
         paystack_reference    VARCHAR(255),
         paystack_access_code  VARCHAR(255),
@@ -202,6 +202,73 @@ const initDB = async () => {
       ALTER TABLE deals
         ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
         ADD COLUMN IF NOT EXISTS cancelled_by UUID REFERENCES users(id);
+    `);
+
+    // Allow 'archived' status on existing databases (CHECK constraint predates it)
+    await client.query(`
+      ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;
+      ALTER TABLE deals ADD CONSTRAINT deals_status_check CHECK (status IN (
+        'initiated','payment_pending','escrow_held',
+        'docs_generated','movein_pending','completed','disputed','cancelled','archived'
+      ));
+    `);
+
+    // ── DATA REPAIR (idempotent, unpaid deals only — paid money is never touched) ──
+
+    // Room share listings saved without a per-person price caused ₦0 deals —
+    // backfill from an even split of the full rent
+    await client.query(`
+      UPDATE listings
+      SET room_share_price_per_person = ROUND(rent_price::numeric / GREATEST(room_share_slots, 1))
+      WHERE is_room_share = true
+        AND (room_share_price_per_person IS NULL OR room_share_price_per_person <= 0)
+        AND rent_price > 0;
+    `);
+
+    // Archive duplicate unpaid deals (keep the newest per listing + tenant),
+    // releasing any room share slots the duplicates were holding
+    await client.query(`
+      WITH ranked AS (
+        SELECT id, listing_id, is_room_share_deal,
+               ROW_NUMBER() OVER (PARTITION BY listing_id, tenant_id ORDER BY created_at DESC) AS rn
+        FROM deals
+        WHERE status IN ('initiated','payment_pending')
+      ), archived AS (
+        UPDATE deals SET status='archived', updated_at=NOW()
+        WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+        RETURNING listing_id, is_room_share_deal
+      )
+      UPDATE listings l
+      SET room_share_slots_filled = GREATEST(l.room_share_slots_filled - d.cnt, 0)
+      FROM (
+        SELECT listing_id, COUNT(*) AS cnt FROM archived
+        WHERE is_room_share_deal = true GROUP BY listing_id
+      ) d
+      WHERE l.id = d.listing_id;
+    `);
+
+    // Archive unpaid ₦0 deals created before per-person pricing was enforced
+    await client.query(`
+      WITH archived AS (
+        UPDATE deals SET status='archived', updated_at=NOW()
+        WHERE status IN ('initiated','payment_pending') AND rent_amount <= 0
+        RETURNING listing_id, is_room_share_deal
+      )
+      UPDATE listings l
+      SET room_share_slots_filled = GREATEST(l.room_share_slots_filled - d.cnt, 0)
+      FROM (
+        SELECT listing_id, COUNT(*) AS cnt FROM archived
+        WHERE is_room_share_deal = true GROUP BY listing_id
+      ) d
+      WHERE l.id = d.listing_id;
+    `);
+
+    // Repair totals saved by the old multiply-instead-of-add bug
+    await client.query(`
+      UPDATE deals
+      SET total_paid = rent_amount + service_fee_tenant, updated_at=NOW()
+      WHERE status IN ('initiated','payment_pending')
+        AND total_paid <> rent_amount + service_fee_tenant;
     `);
 
     // Enable RLS on all public tables — blocks direct PostgREST access;

@@ -13,8 +13,11 @@ const paystackHeaders = {
 const initiateDeal = async (req, res) => {
   const { listing_id, move_in_date, lease_duration_months } = req.body;
   if (!listing_id) return res.status(400).json({ error: 'Listing ID required.' });
+  if (!move_in_date) return res.status(400).json({ error: 'Move-in date is required.' });
+  if (!lease_duration_months) return res.status(400).json({ error: 'Lease duration is required.' });
 
   const client = await pool.connect();
+  let committed = false;
   try {
     await client.query('BEGIN');
 
@@ -29,21 +32,62 @@ const initiateDeal = async (req, res) => {
     }
     const listing = listingResult.rows[0];
 
-    // Room share handling
+    // Room share is the tenant's choice on a room-share listing, not a forced flow.
+    // Older clients that don't send is_room_share fall back to the listing's flag.
+    const is_room_share_deal = listing.is_room_share &&
+      (req.body.is_room_share === undefined
+        ? true
+        : req.body.is_room_share === true || req.body.is_room_share === 'true');
+
+    // Idempotency: lock any unpaid deals this tenant already has on this listing.
+    // A Paystack timeout after COMMIT used to orphan an 'initiated' deal — the user
+    // saw "Failed to initiate" and every retry inserted a duplicate. Instead, reuse
+    // the existing deal on retry and archive any leftovers.
+    const existingResult = await client.query(
+      `SELECT * FROM deals
+       WHERE listing_id=$1 AND tenant_id=$2 AND status IN ('initiated','payment_pending')
+       ORDER BY created_at DESC
+       FOR UPDATE`,
+      [listing_id, req.user.id]
+    );
+    const reusable = existingResult.rows.find(d => !!d.is_room_share_deal === is_room_share_deal);
+
+    let slots_filled = Number(listing.room_share_slots_filled) || 0;
+    for (const old of existingResult.rows) {
+      if (reusable && old.id === reusable.id) continue;
+      await client.query("UPDATE deals SET status='archived', updated_at=NOW() WHERE id=$1", [old.id]);
+      if (old.is_room_share_deal && slots_filled > 0) {
+        await client.query(
+          'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
+          [listing_id]
+        );
+        slots_filled -= 1;
+      }
+    }
+
     let rent_amount;
-    let is_room_share_deal = false;
     let room_share_slot_number = null;
 
-    if (listing.is_room_share) {
-      if (listing.room_share_slots_filled >= listing.room_share_slots) {
+    if (is_room_share_deal) {
+      if (!reusable && slots_filled >= listing.room_share_slots) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'All room share slots are filled for this listing.' });
       }
-      rent_amount = Number(listing.room_share_price_per_person);
-      is_room_share_deal = true;
-      room_share_slot_number = listing.room_share_slots_filled + 1;
+      // Fall back to an even split of the full rent if the agent never set a per-person price
+      const slots = Math.max(Number(listing.room_share_slots) || 1, 1);
+      rent_amount = Number(listing.room_share_price_per_person) ||
+                    Math.round(Number(listing.rent_price) / slots);
     } else {
+      if (listing.is_room_share && slots_filled > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'This property already has room share tenants. Please join the room share deal instead.' });
+      }
       rent_amount = Number(listing.rent_price);
+    }
+
+    if (!Number.isFinite(rent_amount) || rent_amount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This listing has no valid price set. Please contact the agent or SouthSwift support.' });
     }
 
     // Calculate fees — 2.5% from tenant, 2.5% from agent (5% total split equally)
@@ -51,29 +95,45 @@ const initiateDeal = async (req, res) => {
     const service_fee_landlord = Math.round(rent_amount * 0.025);
     const total_paid          = rent_amount + service_fee_tenant;
 
-    // Create deal record
-    const dealResult = await client.query(
-      `INSERT INTO deals
-       (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
-        service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
-        is_room_share_deal, room_share_slot_number)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11) RETURNING *`,
-      [listing_id, req.user.id, listing.agent_id, rent_amount,
-       service_fee_tenant, service_fee_landlord, total_paid,
-       move_in_date||null, lease_duration_months||12,
-       is_room_share_deal, room_share_slot_number]
-    );
-    const deal = dealResult.rows[0];
-
-    // Increment room_share_slots_filled atomically within the transaction
-    if (is_room_share_deal) {
-      await client.query(
-        'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1 AND room_share_slots_filled < room_share_slots',
-        [listing_id]
+    let deal;
+    if (reusable) {
+      // Refresh the existing deal — repairs old ₦0 / stale-total rows on retry too
+      const updated = await client.query(
+        `UPDATE deals SET rent_amount=$1, service_fee_tenant=$2, service_fee_landlord=$3,
+           total_paid=$4, move_in_date=$5, lease_duration_months=$6, status='initiated', updated_at=NOW()
+         WHERE id=$7 RETURNING *`,
+        [rent_amount, service_fee_tenant, service_fee_landlord, total_paid,
+         move_in_date, lease_duration_months, reusable.id]
       );
+      deal = updated.rows[0];
+      room_share_slot_number = deal.room_share_slot_number;
+    } else {
+      if (is_room_share_deal) room_share_slot_number = slots_filled + 1;
+
+      const dealResult = await client.query(
+        `INSERT INTO deals
+         (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
+          service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
+          is_room_share_deal, room_share_slot_number)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11) RETURNING *`,
+        [listing_id, req.user.id, listing.agent_id, rent_amount,
+         service_fee_tenant, service_fee_landlord, total_paid,
+         move_in_date, lease_duration_months,
+         is_room_share_deal, room_share_slot_number]
+      );
+      deal = dealResult.rows[0];
+
+      // Increment room_share_slots_filled atomically within the transaction
+      if (is_room_share_deal) {
+        await client.query(
+          'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1 AND room_share_slots_filled < room_share_slots',
+          [listing_id]
+        );
+      }
     }
 
     await client.query('COMMIT');
+    committed = true;
 
     // Initiate Paystack payment
     const paystackRes = await axios.post(
@@ -118,9 +178,13 @@ const initiateDeal = async (req, res) => {
         : '🛡️ SwiftShield escrow initiated. Complete payment to secure your deal.'
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (!committed) await client.query('ROLLBACK');
     console.error('Deal initiation error:', err.message);
-    res.status(500).json({ error: 'Failed to initiate deal. Please try again.' });
+    res.status(500).json({
+      error: committed
+        ? 'Your deal was saved but the payment page could not be opened. Please try again — you will not be charged twice.'
+        : 'Failed to initiate deal. Please try again.'
+    });
   } finally {
     client.release();
   }
@@ -359,7 +423,7 @@ const getMyDeals = async (req, res) => {
       `SELECT d.*, l.title AS listing_title, l.address, l.city, l.state, l.images
        FROM deals d
        JOIN listings l ON l.id = d.listing_id
-       WHERE d.tenant_id=$1 OR d.agent_id=$1
+       WHERE (d.tenant_id=$1 OR d.agent_id=$1) AND d.status <> 'archived'
        ORDER BY d.created_at DESC`,
       [req.user.id]
     );

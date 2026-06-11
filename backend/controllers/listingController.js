@@ -111,6 +111,19 @@ const getListing = async (req, res) => {
   }
 };
 
+// Strip characters that break PostgreSQL array parsing ('&', quotes, braces, ...)
+const sanitizeAmenities = (raw) => {
+  let amenities = [];
+  if (typeof raw === 'string') {
+    amenities = raw.split(',').map(a => a.trim()).filter(Boolean);
+  } else if (Array.isArray(raw)) {
+    amenities = raw;
+  }
+  return amenities
+    .map(a => String(a).replace(/&/g, 'and').replace(/[^a-zA-Z0-9\s,\-]/g, '').trim())
+    .filter(Boolean);
+};
+
 // POST /api/listings — agent creates listing
 const createListing = async (req, res) => {
   const {
@@ -122,21 +135,16 @@ const createListing = async (req, res) => {
   if (!title || !rent_price || !address || !city || !state)
     return res.status(400).json({ error: 'Title, price, address, city, and state are required.' });
 
-  let amenities = [];
-  if (req.body['amenities[]']) {
-    amenities = Array.isArray(req.body['amenities[]'])
-      ? req.body['amenities[]']
-      : [req.body['amenities[]']];
-  } else if (req.body.amenities) {
-    amenities = typeof req.body.amenities === 'string'
-      ? req.body.amenities.split(',').map(a => a.trim()).filter(Boolean)
-      : req.body.amenities;
-  }
-  amenities = amenities.map(a => a.replace(/&/g, 'and').replace(/[^a-zA-Z0-9\s,\-]/g, '').trim()).filter(Boolean);
+  const amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
 
   const is_room_share = req.body.is_room_share === 'true' || req.body.is_room_share === true;
-  const room_share_price_per_person = req.body.room_share_price_per_person || null;
-  const room_share_slots = req.body.room_share_slots || 1;
+  const room_share_price_per_person = Number(req.body.room_share_price_per_person) || null;
+  const room_share_slots = is_room_share
+    ? Math.max(parseInt(req.body.room_share_slots) || 2, 2)
+    : 1;
+
+  if (is_room_share && (!room_share_price_per_person || room_share_price_per_person <= 0))
+    return res.status(400).json({ error: 'Price per person is required when room share is enabled.' });
 
   try {
     // Check agent is verified
@@ -171,6 +179,13 @@ const createListing = async (req, res) => {
 
 // PUT /api/listings/:id
 const updateListing = async (req, res) => {
+  if (req.body.amenities !== undefined)
+    req.body.amenities = sanitizeAmenities(req.body.amenities);
+
+  if (req.body.room_share_price_per_person !== undefined &&
+      !(Number(req.body.room_share_price_per_person) > 0))
+    return res.status(400).json({ error: 'Price per person must be greater than zero.' });
+
   const fields = ['title','description','rent_price','bedrooms','bathrooms','address','city','state','is_available','amenities',
                   'is_room_share','room_share_price_per_person','room_share_slots'];
   const updates = []; const params = [];
