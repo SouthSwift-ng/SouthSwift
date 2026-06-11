@@ -207,15 +207,25 @@ const verifyPayment = async (req, res) => {
     const deal_id = metadata?.deal_id;
     if (!deal_id) return res.status(400).json({ error: 'Invalid deal reference.' });
 
-    // Verify amount matches expected total (Paystack returns kobo)
-    const dealCheck = await pool.query(
+    // Find the deal — by reference first, then by the deal_id we embedded in the
+    // transaction metadata. A retry refreshes the deal's stored reference, so a
+    // payment completed on an older checkout page won't match by reference alone.
+    let dealCheck = await pool.query(
       'SELECT id, total_paid, status, tenant_id FROM deals WHERE paystack_reference=$1',
       [reference]
     );
+    if (!dealCheck.rows.length) {
+      dealCheck = await pool.query(
+        'SELECT id, total_paid, status, tenant_id FROM deals WHERE id=$1',
+        [deal_id]
+      );
+    }
     if (!dealCheck.rows.length) return res.status(404).json({ error: 'Deal not found for this reference.' });
     const pendingDeal = dealCheck.rows[0];
 
-    if (pendingDeal.status !== 'payment_pending')
+    // 'initiated' is reachable too: Paystack accepted the charge but our
+    // reference-update query failed after initialization
+    if (!['payment_pending', 'initiated'].includes(pendingDeal.status))
       return res.status(400).json({ error: 'Payment already verified for this deal.' });
 
     if (req.user && pendingDeal.tenant_id !== req.user.id)
@@ -225,10 +235,11 @@ const verifyPayment = async (req, res) => {
     if (amount !== expectedKobo || (currency && currency !== 'NGN'))
       return res.status(400).json({ error: 'Payment amount mismatch. Contact support.' });
 
-    // Update deal to escrow_held — only if still payment_pending (idempotent)
+    // Update deal to escrow_held — the status guard keeps this idempotent.
+    // Store the reference that was actually paid (may be an older attempt's).
     const dealResult = await pool.query(
-      "UPDATE deals SET status='escrow_held', updated_at=NOW() WHERE paystack_reference=$1 AND status='payment_pending' RETURNING *",
-      [reference]
+      "UPDATE deals SET status='escrow_held', paystack_reference=$2, updated_at=NOW() WHERE id=$1 AND status IN ('payment_pending','initiated') RETURNING *",
+      [pendingDeal.id, reference]
     );
     if (!dealResult.rows.length) return res.status(400).json({ error: 'Payment already verified for this deal.' });
     const deal = dealResult.rows[0];

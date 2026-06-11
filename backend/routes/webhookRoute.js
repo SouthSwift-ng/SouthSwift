@@ -19,18 +19,29 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   const event = JSON.parse(rawBody);
   if (event.event !== 'charge.success') return res.json({ received: true });
 
-  const { reference, amount, currency } = event.data;
+  const { reference, amount, currency, metadata } = event.data;
   if (!reference) return res.json({ received: true });
 
   try {
-    const dealCheck = await pool.query(
+    // Find the deal — by reference first, then by the deal_id we embedded in the
+    // transaction metadata. A retry refreshes the deal's stored reference, so a
+    // payment completed on an older checkout page won't match by reference alone.
+    let dealCheck = await pool.query(
       'SELECT id, total_paid, status FROM deals WHERE paystack_reference=$1',
       [reference]
     );
+    const metaDealId = typeof metadata?.deal_id === 'string' &&
+      /^[0-9a-fA-F-]{36}$/.test(metadata.deal_id) ? metadata.deal_id : null;
+    if (!dealCheck.rows.length && metaDealId) {
+      dealCheck = await pool.query(
+        'SELECT id, total_paid, status FROM deals WHERE id=$1',
+        [metaDealId]
+      );
+    }
     if (!dealCheck.rows.length) return res.json({ received: true });
     const deal = dealCheck.rows[0];
 
-    if (deal.status !== 'payment_pending') return res.json({ received: true });
+    if (!['payment_pending', 'initiated'].includes(deal.status)) return res.json({ received: true });
 
     const expectedKobo = deal.total_paid * 100;
     if (amount !== expectedKobo || (currency && currency !== 'NGN')) {
@@ -38,9 +49,10 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       return res.status(400).json({ error: 'Amount mismatch.' });
     }
 
+    // Status guard keeps this idempotent; store the reference that was actually paid
     const dealResult = await pool.query(
-      "UPDATE deals SET status='escrow_held', updated_at=NOW() WHERE paystack_reference=$1 AND status='payment_pending' RETURNING *",
-      [reference]
+      "UPDATE deals SET status='escrow_held', paystack_reference=$2, updated_at=NOW() WHERE id=$1 AND status IN ('payment_pending','initiated') RETURNING *",
+      [deal.id, reference]
     );
     if (!dealResult.rows.length) return res.json({ received: true });
     const updatedDeal = dealResult.rows[0];
