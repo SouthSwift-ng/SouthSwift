@@ -151,7 +151,7 @@ const initiateDeal = async (req, res) => {
             { display_name: 'Deal ID',  variable_name: 'deal_id',  value: deal.id }
           ]
         },
-        callback_url: `${process.env.CLIENT_URL}/deals/${deal.id}/confirm`,
+        callback_url: `${process.env.CLIENT_URL}/deals/${deal.id}`,
       },
       { headers: paystackHeaders }
     );
@@ -490,18 +490,7 @@ const cancelDeal = async (req, res) => {
       [reason, req.user.id, req.params.id]
     );
 
-    const tenantRes = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.tenant_id]);
-    const agentRes  = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.agent_id]);
-    const tenant = tenantRes.rows[0];
-    const agent  = agentRes.rows[0];
-
-    const cancelledByName = req.user.id === deal.tenant_id ? tenant.full_name : agent.full_name;
-    const emailBody = `<h2>Deal Cancelled</h2><p>Deal for listing has been cancelled by ${cancelledByName}.</p><p><strong>Reason:</strong> ${reason}</p>`;
-
-    await sendEmail({ to: tenant.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
-    await sendEmail({ to: agent.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
-
-    // If room share, decrement the slot
+    // Release the room share slot — a state change, so finish it before responding
     if (deal.is_room_share_deal) {
       await pool.query(
         'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
@@ -509,7 +498,24 @@ const cancelDeal = async (req, res) => {
       );
     }
 
+    // Respond immediately. Notification emails are best-effort and must NOT block
+    // the response — slow SMTP could exceed the client timeout and make a
+    // successful cancellation look like a failure to the user.
     res.json({ message: 'Deal cancelled successfully.' });
+
+    // Fire-and-forget notifications (errors logged, never surfaced to the user)
+    (async () => {
+      try {
+        const tenantRes = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.tenant_id]);
+        const agentRes  = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.agent_id]);
+        const tenant = tenantRes.rows[0];
+        const agent  = agentRes.rows[0];
+        const cancelledByName = req.user.id === deal.tenant_id ? tenant.full_name : agent.full_name;
+        const emailBody = `<h2>Deal Cancelled</h2><p>Deal for listing has been cancelled by ${cancelledByName}.</p><p><strong>Reason:</strong> ${reason}</p>`;
+        await sendEmail({ to: tenant.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
+        await sendEmail({ to: agent.email, subject: 'SouthSwift — Deal Cancelled', html: emailBody });
+      } catch (e) { console.error('Cancel notification error:', e.message); }
+    })();
   } catch (err) {
     console.error('Cancel deal error:', err.message);
     res.status(500).json({ error: 'Something went wrong.' });

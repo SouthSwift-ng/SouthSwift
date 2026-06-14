@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   getDeal, confirmMoveIn, raiseDispute, cancelDeal, sendMessage, getMessages,
+  initiateDeal, verifyPayment, isPaystackCheckoutUrl,
   createListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
   getAgent, submitReview, getAgentReviews, getWaitlist
@@ -27,6 +28,8 @@ export function DealDetail() {
   const [reviewed, setReviewed] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const fetchMessages = () =>
     getMessages(id).then(r => setMessages(r.data)).catch(() => {});
@@ -36,6 +39,30 @@ export function DealDetail() {
   useEffect(() => {
     getDeal(id).then(r=>setDeal(r.data)).finally(()=>setL(false));
   }, [id]);
+
+  // Returning from Paystack — the callback appends ?reference=...&trxref=...
+  // Verify the payment, then refresh the deal so the progress + badge update.
+  // The webhook is the server-side backup; "already verified" is not an error.
+  useEffect(() => {
+    const reference = searchParams.get('reference') || searchParams.get('trxref');
+    if (!reference) return;
+    let active = true;
+    (async () => {
+      try {
+        await verifyPayment(reference);
+        if (active) toast.success('Payment confirmed — funds secured in SwiftShield escrow. 🛡️');
+      } catch (err) {
+        const msg = err.response?.data?.error;
+        if (active && msg && !/already verified/i.test(msg)) toast.error(msg);
+      } finally {
+        if (active) {
+          getDeal(id).then(r => setDeal(r.data)).catch(() => {});
+          setSearchParams({}, { replace: true });
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   const handleConfirm = async () => {
     try {
@@ -84,6 +111,34 @@ export function DealDetail() {
       setShowCancelConfirm(false);
       getDeal(id).then(r=>setDeal(r.data));
     } catch(err) { toast.error(err.response?.data?.error||'Failed to cancel deal.'); }
+  };
+
+  // Resume payment for an awaiting-payment deal. initiateDeal is idempotent —
+  // it reuses this same deal and returns a fresh, valid Paystack checkout URL.
+  const handlePayNow = async () => {
+    setPaying(true);
+    try {
+      const res = await initiateDeal({
+        listing_id:            deal.listing_id,
+        move_in_date:          deal.move_in_date,
+        lease_duration_months: deal.lease_duration_months,
+        is_room_share:         !!deal.is_room_share_deal,
+      });
+      const paymentUrl = res.data.payment_url;
+      if (isPaystackCheckoutUrl(paymentUrl)) {
+        toast.success('Redirecting to secure payment...');
+        window.location.href = paymentUrl;
+        return;
+      }
+      toast.error('Invalid payment URL. Please contact support.');
+    } catch (err) {
+      if (!err.response) {
+        toast.error('Network timeout — please check your connection and try again.', { duration: 8000 });
+      } else {
+        toast.error(err.response?.data?.error || 'Failed to start payment.');
+      }
+    }
+    setPaying(false);
   };
 
   if (loading) return <div style={ps.loading}>🛡️ Loading deal...</div>;
@@ -171,6 +226,16 @@ export function DealDetail() {
                 );
               })}
             </div>
+
+            {isTenant && ['initiated','payment_pending'].includes(deal.status) && (
+              <div style={ps.actionCard}>
+                <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
+                <p style={ps.actionDesc}>Pay securely via Paystack. Your rent stays in SwiftShield escrow and is only released when you confirm move-in.</p>
+                <button onClick={handlePayNow} disabled={paying} style={{...ps.confirmBtn, opacity: paying ? 0.7 : 1}}>
+                  {paying ? 'Starting payment…' : `Pay Now — ₦${Number(deal.total_paid).toLocaleString()}`}
+                </button>
+              </div>
+            )}
 
             {canConfirm && (
               <div style={ps.actionCard}>
