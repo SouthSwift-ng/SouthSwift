@@ -95,7 +95,7 @@ const agentController = {
       const result = await pool.query(`
         SELECT u.id, u.full_name, u.phone, u.city, u.state, u.avatar_url,
                ap.agency_name, ap.verification_status, ap.total_deals,
-               ap.rating, ap.bio, ap.verified_at
+               ap.rating, ap.bio, ap.verified_at, ap.intro_video_url
         FROM users u
         JOIN agent_profiles ap ON ap.user_id = u.id
         WHERE u.id = $1
@@ -242,6 +242,19 @@ const agentController = {
         'SELECT * FROM listings WHERE agent_id=$1 ORDER BY created_at DESC', [req.user.id]
       );
       res.json(result.rows);
+    } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
+  },
+
+  // POST /api/agents/intro-video — agent uploads/replaces their profile intro video
+  uploadIntroVideo: async (req, res) => {
+    const intro_video_url = req.file?.path || null;
+    if (!intro_video_url) return res.status(400).json({ error: 'No video file received.' });
+    try {
+      await pool.query(
+        'UPDATE agent_profiles SET intro_video_url=$1, updated_at=NOW() WHERE user_id=$2',
+        [intro_video_url, req.user.id]
+      );
+      res.json({ intro_video_url });
     } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 };

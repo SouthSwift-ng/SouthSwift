@@ -178,7 +178,8 @@ const initDB = async () => {
       ADD COLUMN IF NOT EXISTS account_name   VARCHAR(255),
       ADD COLUMN IF NOT EXISTS paystack_recipient_code VARCHAR(100),
       ADD COLUMN IF NOT EXISTS dojah_nin_match  BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS dojah_face_score INTEGER DEFAULT 0;
+      ADD COLUMN IF NOT EXISTS dojah_face_score INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS updated_at       TIMESTAMP DEFAULT NOW();
     `);
 
     // Add room share columns to listings if not exists
@@ -188,6 +189,16 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS room_share_price_per_person BIGINT,
         ADD COLUMN IF NOT EXISTS room_share_slots            INTEGER DEFAULT 1,
         ADD COLUMN IF NOT EXISTS room_share_slots_filled     INTEGER DEFAULT 0;
+    `);
+
+    // Add video columns (listing tour videos + agent intro video)
+    await client.query(`
+      ALTER TABLE listings
+        ADD COLUMN IF NOT EXISTS videos TEXT[];
+    `);
+    await client.query(`
+      ALTER TABLE agent_profiles
+        ADD COLUMN IF NOT EXISTS intro_video_url TEXT;
     `);
 
     // Add room share columns to deals if not exists

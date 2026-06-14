@@ -58,6 +58,8 @@ export const createListing  = (data)   => {
   Object.entries(data).forEach(([k, v]) => {
     if (k === 'images') {
       if (Array.isArray(v)) v.forEach(file => fd.append('images', file));
+    } else if (k === 'videos') {
+      if (Array.isArray(v)) v.forEach(file => fd.append('videos', file));
     } else if (k === 'amenities' && Array.isArray(v)) {
       v.forEach(item => fd.append('amenities[]', item)); // correct — sends each item separately
     } else if (Array.isArray(v)) {
@@ -68,7 +70,7 @@ export const createListing  = (data)   => {
   });
   return API.post('/listings', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000, // 60s for image uploads
+    timeout: 180000, // 180s — videos can be large on slow connections
   });
 };
 export const updateListing      = (id, data) => API.put(`/listings/${id}`, data);
@@ -105,6 +107,14 @@ export const submitVerification = (data) => {
   return API.post('/agents/verify-request', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 60000, // 60s for doc uploads
+  });
+};
+export const uploadIntroVideo = (file) => {
+  const fd = new FormData();
+  fd.append('intro_video', file);
+  return API.post('/agents/intro-video', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000, // 180s — videos can be large on slow connections
   });
 };
 

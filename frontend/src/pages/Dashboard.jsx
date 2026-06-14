@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getMyDeals, getMyListings, submitVerification } from '../utils/api';
+import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo } from '../utils/api';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 
@@ -19,6 +19,8 @@ export function Dashboard() {
   const [tab, setTab]      = useState('deals');
   const [verForm, setVerForm] = useState({ nin:'', agency_name:'', bio:'', account_number:'', bank_code:'', account_name:'' });
   const [verDocs, setVerDocs] = useState({ id_document: null, selfie: null });
+  const [introVideo, setIntroVideo] = useState(null);
+  const [introUploading, setIntroUploading] = useState(false);
 
   useEffect(() => {
     getMyDeals().then(r => setDeals(r.data)).catch(()=>{});
@@ -42,6 +44,17 @@ export function Dashboard() {
       });
       toast.success('Verification submitted! SouthSwift will review within 48 hours.');
     } catch (err) { toast.error(err.response?.data?.error || 'Failed.'); }
+  };
+  const handleIntroVideo = async (e) => {
+    e.preventDefault();
+    if (!introVideo) { toast.error('Please choose a video first.'); return; }
+    setIntroUploading(true);
+    try {
+      await uploadIntroVideo(introVideo);
+      toast.success('Intro video uploaded! It now shows on your public profile.');
+      setIntroVideo(null);
+    } catch (err) { toast.error(err.response?.data?.error || 'Upload failed.'); }
+    setIntroUploading(false);
   };
 
   return (
@@ -131,6 +144,7 @@ export function Dashboard() {
 
         {/* Verification */}
         {tab==='verification' && user?.role==='agent' && (
+          <>
           <div style={s.verCard}>
             <h3 style={s.verTitle}>Submit Agent Verification</h3>
             <p style={s.verDesc}>Verified agents get a badge, more leads, and tenant trust. SouthSwift reviews within 48 hours.</p>
@@ -182,6 +196,21 @@ export function Dashboard() {
               <button style={s.verBtn}>Submit for Verification</button>
             </form>
           </div>
+
+          <div style={{...s.verCard, marginTop:16}}>
+            <h3 style={s.verTitle}>Agent Intro Video</h3>
+            <p style={s.verDesc}>Upload a short video introducing yourself. It appears on your public agent profile. (Optional, max 100MB.)</p>
+            <form onSubmit={handleIntroVideo}>
+              <input type="file" accept="video/*"
+                onChange={e => setIntroVideo(e.target.files[0])}
+                style={{...s.input, padding:'6px'}} />
+              {introVideo && <span style={{fontSize:11,color:'#888'}}>✓ {introVideo.name}</span>}
+              <button style={{...s.verBtn, marginTop:12}} disabled={introUploading}>
+                {introUploading ? 'Uploading…' : 'Upload Intro Video'}
+              </button>
+            </form>
+          </div>
+          </>
         )}
       </div>
     </div>
