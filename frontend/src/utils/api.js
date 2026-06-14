@@ -87,6 +87,16 @@ export const cancelDeal    = (dealId, reason) => API.post(`/deals/${dealId}/canc
 export const getMyDeals    = ()             => API.get('/deals/my');
 export const getDeal       = (id)           => API.get(`/deals/${id}`);
 
+// True only for genuine Paystack checkout URLs. Paystack returns
+// https://checkout.paystack.com/... — note the .com, not .co.
+export const isPaystackCheckoutUrl = (url) => {
+  try {
+    const h = new URL(url).hostname;
+    return h === 'paystack.com' || h.endsWith('.paystack.com') ||
+           h === 'paystack.co'  || h.endsWith('.paystack.co');
+  } catch { return false; }
+};
+
 // ── MESSAGES ─────────────────────────────────────────────────────────────────
 export const sendMessage = (dealId, receiverId, content) =>
   API.post('/messages/send', { deal_id: dealId, content });

@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { getListing, initiateDeal, getRoomShareStatus } from '../utils/api';
+import { getListing, initiateDeal, getRoomShareStatus, isPaystackCheckoutUrl } from '../utils/api';
 import { useAuth } from '../App';
 import { Shield, MapPin, Bed, Bath, CheckCircle, Home, Star } from 'lucide-react';
 
@@ -133,7 +133,7 @@ export default function ListingDetail() {
       });
       toast.success('Deal initiated! Redirecting to payment...');
       const paymentUrl = res.data.payment_url;
-      if (paymentUrl && new URL(paymentUrl).hostname.endsWith('paystack.co')) {
+      if (isPaystackCheckoutUrl(paymentUrl)) {
         window.location.href = paymentUrl;
       } else {
         toast.error('Invalid payment URL. Please contact support.');
