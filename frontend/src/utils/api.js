@@ -109,6 +109,14 @@ export const submitVerification = (data) => {
     timeout: 60000, // 60s for doc uploads
   });
 };
+export const uploadIntroVideo = (file) => {
+  const fd = new FormData();
+  fd.append('intro_video', file);
+  return API.post('/agents/intro-video', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000, // 180s — videos can be large on slow connections
+  });
+};
 
 // ── ADMIN ─────────────────────────────────────────────────────────────────────
 export const getDashboard     = ()               => API.get('/admin/dashboard');
