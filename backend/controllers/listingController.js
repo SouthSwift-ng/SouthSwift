@@ -155,20 +155,23 @@ const createListing = async (req, res) => {
       return res.status(403).json({ error: 'Only verified agents can create listings.' });
     }
 
-    const images = req.files && req.files.length > 0
-      ? req.files.map(f => f.path)
+    const images = req.files?.images?.length
+      ? req.files.images.map(f => f.path)
       : (Array.isArray(req.body.images) ? req.body.images : []);
+    const videos = req.files?.videos?.length
+      ? req.files.videos.map(f => f.path)
+      : [];
 
     const result = await pool.query(
       `INSERT INTO listings
        (agent_id, title, description, property_type, bedrooms, bathrooms,
-        rent_price, rent_period, address, city, state, amenities, images, latitude, longitude,
+        rent_price, rent_period, address, city, state, amenities, images, videos, latitude, longitude,
         is_room_share, room_share_price_per_person, room_share_slots)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [req.user.id, title, description, property_type||'apartment',
        bedrooms||1, bathrooms||1, rent_price, rent_period||'yearly',
-       address, city, state, amenities, images, latitude||null, longitude||null,
+       address, city, state, amenities, images, videos, latitude||null, longitude||null,
        is_room_share, room_share_price_per_person, room_share_slots]
     );
     res.status(201).json(result.rows[0]);
