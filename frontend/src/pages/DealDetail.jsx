@@ -798,6 +798,13 @@ export function AgentProfile() {
           </div>
         </div>
         {agent.bio && <div style={ps.agentBio}>{agent.bio}</div>}
+        {agent.intro_video_url && (
+          <div style={{...ps.agentBio, marginTop:16}}>
+            <h3 style={{fontSize:15, fontWeight:700, color:G, margin:'0 0 12px'}}>Intro Video</h3>
+            <video src={agent.intro_video_url} controls playsInline preload="metadata"
+              style={{width:'100%', maxWidth:560, borderRadius:10, background:'#000'}}/>
+          </div>
+        )}
         {reviews.length > 0 && (
           <div style={{background:'white', borderRadius:12, padding:'20px', border:'1px solid #E5E7EB', marginTop:16}}>
             <h3 style={{fontSize:15, fontWeight:700, color:G, margin:'0 0 14px'}}>
