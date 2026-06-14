@@ -65,4 +65,23 @@ const uploadAgentDocs = multer({
   { name: 'selfie',      maxCount: 1 },
 ]);
 
-module.exports = { uploadListingMedia, uploadAgentDocs };
+const introVideoStorage = new CloudinaryStorage({
+  cloudinary,
+  params: (req, file) => ({
+    folder: 'southswift/agent-videos',
+    resource_type: 'video',
+    allowed_formats: ['mp4', 'mov', 'webm'],
+    public_id: `${req.user.id}-intro-${Date.now()}`,
+  }),
+});
+
+const uploadIntroVideo = multer({
+  storage: introVideoStorage,
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^video\/(mp4|quicktime|webm)$/.test(file.mimetype)) return cb(null, true);
+    return cb(new Error('Only video files (mp4, mov, webm) are allowed.'), false);
+  },
+}).single('intro_video');
+
+module.exports = { uploadListingMedia, uploadAgentDocs, uploadIntroVideo };
