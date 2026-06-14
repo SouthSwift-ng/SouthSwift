@@ -190,6 +190,16 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS room_share_slots_filled     INTEGER DEFAULT 0;
     `);
 
+    // Add video columns (listing tour videos + agent intro video)
+    await client.query(`
+      ALTER TABLE listings
+        ADD COLUMN IF NOT EXISTS videos TEXT[];
+    `);
+    await client.query(`
+      ALTER TABLE agent_profiles
+        ADD COLUMN IF NOT EXISTS intro_video_url TEXT;
+    `);
+
     // Add room share columns to deals if not exists
     await client.query(`
       ALTER TABLE deals
