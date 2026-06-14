@@ -310,6 +310,7 @@ export function CreateListing() {
   const [loading, setL]      = useState(false);
   const [images, setImages]  = useState([]);
   const [previews, setPreviews] = useState([]);
+  const [videos, setVideos]  = useState([]);
 
   // Nominatim address search
   const [addrQuery, setAddrQuery]         = useState('');
@@ -321,6 +322,10 @@ export function CreateListing() {
     const files = Array.from(e.target.files).slice(0, 6);
     setImages(files);
     setPreviews(files.map(f => URL.createObjectURL(f)));
+  };
+
+  const handleVideos = (e) => {
+    setVideos(Array.from(e.target.files).slice(0, 3));
   };
 
   const handleAddrInput = (value) => {
@@ -371,6 +376,7 @@ export function CreateListing() {
         ...form,
         amenities: form.amenities ? form.amenities.split(',').map(a => a.trim()) : [],
         images,
+        videos,
       };
       const res = await createListing(data);
       toast.success('Listing created! 🏠');
@@ -510,6 +516,21 @@ export function CreateListing() {
                     style={{ width: 80, height: 60, objectFit: 'cover', borderRadius: 6, border: '1px solid #DDD' }}/>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* Videos */}
+          <div>
+            <label style={ps.label}>Property Video Tour (up to 3)</label>
+            <input type="file" accept="video/*" multiple onChange={handleVideos}
+              style={{ ...ps.input, padding: '6px' }}/>
+            <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+              Optional. Up to 3 short walkthrough videos (max 100MB each).
+            </p>
+            {videos.length > 0 && (
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#444' }}>
+                {videos.map((f, i) => <li key={i}>{f.name}</li>)}
+              </ul>
             )}
           </div>
 
