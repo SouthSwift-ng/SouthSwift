@@ -186,6 +186,19 @@ export default function ListingDetail() {
           )}
         </div>
 
+        {/* VIDEO TOUR */}
+        {listing.videos?.length > 0 && (
+          <div style={{ background:'white', borderRadius:14, padding:'18px 20px', border:'1px solid #E5E7EB', marginBottom:20 }}>
+            <h3 style={{ fontSize:15, fontWeight:700, color:G, margin:'0 0 12px' }}>Video Tour</h3>
+            <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+              {listing.videos.map((src, i) => (
+                <video key={i} src={src} controls playsInline preload="metadata"
+                  style={{ width:'100%', maxWidth:480, borderRadius:10, background:'#000' }}/>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={s.body}>
           <div style={s.left}>
             {/* Title */}
