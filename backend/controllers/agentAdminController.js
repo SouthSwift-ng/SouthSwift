@@ -251,7 +251,7 @@ const agentController = {
     if (!intro_video_url) return res.status(400).json({ error: 'No video file received.' });
     try {
       await pool.query(
-        'UPDATE agent_profiles SET intro_video_url=$1 WHERE user_id=$2',
+        'UPDATE agent_profiles SET intro_video_url=$1, updated_at=NOW() WHERE user_id=$2',
         [intro_video_url, req.user.id]
       );
       res.json({ intro_video_url });
