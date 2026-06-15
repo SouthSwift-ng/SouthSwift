@@ -3,6 +3,7 @@ const { pool } = require('../config/db');
 const { generateSwiftDoc } = require('./swiftdocController');
 const { sendEmail }         = require('./emailController');
 const { escapeHtml }        = require('../utils/escapeHtml');
+const { computeDealAmounts } = require('../utils/money');
 
 // ── PAYSTACK HELPERS ─────────────────────────────────────────────────────────
 const paystackHeaders = {
@@ -143,9 +144,9 @@ const initiateDeal = async (req, res) => {
     }
 
     // Calculate fees — 2.5% from tenant, 2.5% from agent (5% total split equally)
-    const service_fee_tenant   = Math.round(rent_amount * 0.025);
-    const service_fee_landlord = Math.round(rent_amount * 0.025);
-    const total_paid          = rent_amount + service_fee_tenant;
+    const { serviceFeeTenant: service_fee_tenant,
+            serviceFeeLandlord: service_fee_landlord,
+            totalPaid: total_paid } = computeDealAmounts(rent_amount);
 
     let deal;
     if (reusable) {

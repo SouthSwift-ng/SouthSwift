@@ -1,18 +1,15 @@
 const express = require('express');
-const crypto  = require('crypto');
 const router  = express.Router();
 const { pool } = require('../config/db');
 const { runSwiftDocBackground } = require('../controllers/dealController');
+const { verifyPaystackSignature } = require('../utils/paystackSignature');
 
 router.post('/', express.raw({ type: 'application/json' }), async (req, res) => {
   const rawBody = req.body;
   if (!Buffer.isBuffer(rawBody) && typeof rawBody !== 'string')
     return res.status(400).json({ error: 'Invalid request body.' });
 
-  const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-                      .update(rawBody).digest('hex');
-
-  if (hash !== req.headers['x-paystack-signature'])
+  if (!verifyPaystackSignature(rawBody, req.headers['x-paystack-signature'], process.env.PAYSTACK_SECRET_KEY))
     return res.status(401).json({ error: 'Invalid webhook signature.' });
 
   const event = JSON.parse(rawBody);
