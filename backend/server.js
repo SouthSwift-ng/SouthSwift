@@ -20,6 +20,9 @@ const rateLimit = require('express-rate-limit');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+// ── TRUST RENDER'S PROXY — required so req.ip / X-Forwarded-For work for rate limiting ──
+app.set('trust proxy', 1);
+
 // ── JWT SECRET GUARD — refuse to start with weak/default secrets ────────────
 const WEAK_SECRETS = ['SouthSwift_JWT_SuperSecret_2026_ChangeInProduction', 'changeme', 'secret', 'jwt_secret'];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || WEAK_SECRETS.includes(process.env.JWT_SECRET)) {

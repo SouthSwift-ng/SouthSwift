@@ -4,6 +4,7 @@ const transporter = nodemailer.createTransport({
   host:   process.env.EMAIL_HOST || 'smtp.yandex.com',
   port:   parseInt(process.env.EMAIL_PORT) || 465,
   secure: true,
+  family: 4, // Force IPv4 — Render has no outbound IPv6 route, so AAAA (e.g. Yandex) connections fail with ENETUNREACH
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
