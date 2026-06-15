@@ -9,6 +9,57 @@ const paystackHeaders = {
   'Content-Type': 'application/json',
 };
 
+// Generate the SwiftDoc, deliver it, and record the outcome on the deal — runs in the
+// BACKGROUND after the payment response is already sent, so the slow AI + PDF + upload work
+// can never time out the request or trip a Paystack webhook retry. Never throws to its caller.
+async function runSwiftDocBackground({ deal, listing, tenant, agent }) {
+  try {
+    const { url: docUrl, error: docError } = await generateSwiftDoc({ deal, listing, tenant, agent });
+    const issues = [];
+    if (docError) issues.push(docError);
+
+    if (docUrl) {
+      const tEmail = await sendEmail({
+        to: tenant.email,
+        subject: '🛡️ SouthSwift — Funds in Escrow. Document Ready.',
+        html: `
+          <h2>Your SwiftShield escrow is active</h2>
+          <p>Dear ${tenant.full_name},</p>
+          <p>₦${Number(deal.rent_amount).toLocaleString()} is now held securely in SwiftShield escrow.</p>
+          <p>Your tenancy agreement (SwiftDoc) has been generated: <a href="${docUrl}">Download Agreement</a></p>
+          <p>Once you move in and confirm, funds will be released to your landlord.</p>
+          <p><strong>Deal ID:</strong> ${deal.id}</p>
+        `
+      });
+      const aEmail = await sendEmail({
+        to: agent.email,
+        subject: '🛡️ SouthSwift — Payment secured in escrow for your listing',
+        html: `
+          <h2>Escrow payment received</h2>
+          <p>Dear ${agent.full_name},</p>
+          <p>A tenant has secured ₦${Number(deal.rent_amount).toLocaleString()} in SwiftShield escrow for: ${listing.title}</p>
+          <p>Funds will be released after the tenant confirms their move-in.</p>
+        `
+      });
+      [tEmail, aEmail].forEach(r => { if (r && !r.ok) issues.push(`Escrow email failed: ${r.error}`); });
+
+      await pool.query(
+        "UPDATE deals SET swiftdoc_url=$1, swiftdoc_generated=true, swiftdoc_error=$2, status='docs_generated' WHERE id=$3",
+        [docUrl, issues.length ? issues.join(' | ') : null, deal.id]
+      );
+    } else {
+      // Generation failed — keep funds in escrow, but record WHY instead of hiding it
+      await pool.query(
+        "UPDATE deals SET swiftdoc_error=$1 WHERE id=$2",
+        [issues.join(' | ') || 'Unknown SwiftDoc error', deal.id]
+      );
+    }
+  } catch (docErr) {
+    console.error('SwiftDoc background error:', docErr.message);
+    await pool.query("UPDATE deals SET swiftdoc_error=$1 WHERE id=$2", [docErr.message, deal.id]).catch(() => {});
+  }
+}
+
 // POST /api/deals/initiate — tenant initiates a deal
 const initiateDeal = async (req, res) => {
   const { listing_id, move_in_date, lease_duration_months } = req.body;
@@ -253,60 +304,14 @@ const verifyPayment = async (req, res) => {
     const tenant  = tenantRes.rows[0];
     const agent   = agentRes.rows[0];
 
-    // Generate SwiftDoc — record the outcome on the deal so failures are visible, not silent
-    try {
-      const { url: docUrl, error: docError } = await generateSwiftDoc({ deal, listing, tenant, agent });
-      const issues = [];
-      if (docError) issues.push(docError);
-
-      if (docUrl) {
-        // Email tenant and agent
-        const tEmail = await sendEmail({
-          to: tenant.email,
-          subject: '🛡️ SouthSwift — Funds in Escrow. Document Ready.',
-          html: `
-            <h2>Your SwiftShield escrow is active</h2>
-            <p>Dear ${tenant.full_name},</p>
-            <p>₦${deal.rent_amount.toLocaleString()} is now held securely in SwiftShield escrow.</p>
-            <p>Your tenancy agreement (SwiftDoc) has been generated: <a href="${docUrl}">Download Agreement</a></p>
-            <p>Once you move in and confirm, funds will be released to your landlord.</p>
-            <p><strong>Deal ID:</strong> ${deal.id}</p>
-          `
-        });
-
-        const aEmail = await sendEmail({
-          to: agent.email,
-          subject: '🛡️ SouthSwift — Payment secured in escrow for your listing',
-          html: `
-            <h2>Escrow payment received</h2>
-            <p>Dear ${agent.full_name},</p>
-            <p>A tenant has secured ₦${deal.rent_amount.toLocaleString()} in SwiftShield escrow for: ${listing.title}</p>
-            <p>Funds will be released after the tenant confirms their move-in.</p>
-          `
-        });
-        [tEmail, aEmail].forEach(r => { if (r && !r.ok) issues.push(`Escrow email failed: ${r.error}`); });
-
-        await pool.query(
-          "UPDATE deals SET swiftdoc_url=$1, swiftdoc_generated=true, swiftdoc_error=$2, status='docs_generated' WHERE id=$3",
-          [docUrl, issues.length ? issues.join(' | ') : null, deal.id]
-        );
-      } else {
-        // Generation failed — keep funds in escrow, but record WHY instead of hiding it
-        await pool.query(
-          "UPDATE deals SET swiftdoc_error=$1 WHERE id=$2",
-          [issues.join(' | ') || 'Unknown SwiftDoc error', deal.id]
-        );
-      }
-    } catch (docErr) {
-      console.error('SwiftDoc generation error:', docErr.message);
-      // Still keep funds in escrow even if doc fails — don't block — but record the reason
-      await pool.query("UPDATE deals SET swiftdoc_error=$1 WHERE id=$2", [docErr.message, deal.id]).catch(() => {});
-    }
-
-    // Mark listing as unavailable
+    // Escrow is secured — mark the listing unavailable and respond to the tenant immediately.
     await pool.query("UPDATE listings SET is_available=false WHERE id=$1", [deal.listing_id]);
-
     res.json({ message: '✅ Payment verified. Funds in SwiftShield escrow.', deal_id: deal.id });
+
+    // SwiftDoc generation (slow AI + PDF + Cloudinary upload) runs AFTER the response so the
+    // request can never time out mid-generation. Failures are recorded on the deal, not lost.
+    runSwiftDocBackground({ deal, listing, tenant, agent });
+    return;
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
@@ -535,4 +540,4 @@ const cancelDeal = async (req, res) => {
   }
 };
 
-module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal };
+module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal, runSwiftDocBackground };

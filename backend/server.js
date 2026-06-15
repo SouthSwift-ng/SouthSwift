@@ -5,6 +5,18 @@ const compression  = require('compression');
 const helmet       = require('helmet');
 const { pool, initDB } = require('./config/db');
 
+// ── PROCESS-LEVEL SAFETY NET — a single stray async error must not kill the worker ──
+// (Node crashes on unhandledRejection by default since v15 — this keeps the service up
+//  on Render's single worker and, crucially, logs WHAT failed instead of dying silently.)
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled promise rejection:', reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught exception — restarting:', err.stack || err.message);
+  // The process state is undefined after an uncaught exception; exit cleanly and let Render restart.
+  process.exit(1);
+});
+
 const authRoutes    = require('./routes/auth');
 const agentRoutes   = require('./routes/agents');
 const listingRoutes = require('./routes/listings');
@@ -16,6 +28,11 @@ const reviewRoutes  = require('./routes/reviews');
 const waitlistRoutes= require('./routes/waitlist');
 
 const rateLimit = require('express-rate-limit');
+
+// Global timeout for every outbound axios call (Paystack, Dojah, Nominatim) — axios is a
+// shared singleton, so this covers all call sites. Without it a hung upstream ties up the
+// single Render worker indefinitely. (The Gemini SDK is configured separately.)
+require('axios').defaults.timeout = 15000;
 
 const app  = express();
 const PORT = process.env.PORT || 5000;

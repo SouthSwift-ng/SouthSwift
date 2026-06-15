@@ -2,7 +2,16 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max:                     10,
+  connectionTimeoutMillis: 10000, // fail fast instead of hanging the worker if the DB is unreachable
+  idleTimeoutMillis:       30000,
+});
+
+// An idle client dropped by the DB (routine on Render/Supabase) emits 'error' on the pool;
+// unhandled, that event crashes the whole process. Log and recover instead.
+pool.on('error', (err) => {
+  console.error('❌ Idle Postgres client error (recovered):', err.message);
 });
 
 // ── CREATE ALL TABLES ─────────────────────────────────────────────────────────
