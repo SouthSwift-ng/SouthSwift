@@ -19,9 +19,12 @@ const sendEmail = async ({ to, subject, html, text }) => {
       html: html || `<p>${text}</p>`,
     });
     console.log(`✅ Email sent to ${to}`);
+    return { ok: true };
   } catch (err) {
     console.error('❌ Email send error:', err.message);
-    // Don't throw — email failure should not break the main flow
+    // Don't throw — email failure should not break the main flow — but report it
+    // so callers can record the failure instead of it disappearing silently.
+    return { ok: false, error: err.message };
   }
 };
 

@@ -215,6 +215,12 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS cancelled_by UUID REFERENCES users(id);
     `);
 
+    // Record SwiftDoc / email failure reasons instead of swallowing them silently
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS swiftdoc_error TEXT;
+    `);
+
     // Allow 'archived' status on existing databases (CHECK constraint predates it)
     await client.query(`
       ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;

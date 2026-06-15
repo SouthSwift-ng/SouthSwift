@@ -259,7 +259,7 @@ const generateSwiftDoc = async ({ deal, listing, tenant, agent }) => {
   try {
     if (!process.env.GEMINI_API_KEY) {
       console.warn('⚠️  GEMINI_API_KEY not set — SwiftDoc generation skipped');
-      return null;
+      return { url: null, error: 'GEMINI_API_KEY not configured' };
     }
 
     console.log(`📋 Generating SwiftDoc for deal ${deal.id}...`);
@@ -301,7 +301,7 @@ const generateSwiftDoc = async ({ deal, listing, tenant, agent }) => {
       </div>
     `;
 
-    await Promise.allSettled([
+    const emailResults = await Promise.allSettled([
       sendEmail({
         to:      tenant.email,
         subject: `📋 Your SwiftDoc Agreement — ${listing.address}`,
@@ -313,13 +313,26 @@ const generateSwiftDoc = async ({ deal, listing, tenant, agent }) => {
         html:    emailHtml(agent.full_name.split(' ')[0]),
       }),
     ]);
-    console.log('✅ SwiftDoc emails sent to tenant and agent');
+    const emailErrors = emailResults
+      .map(r => (r.status === 'fulfilled' ? r.value : { ok: false, error: r.reason?.message || 'send failed' }))
+      .filter(r => r && !r.ok)
+      .map(r => r.error);
+    if (emailErrors.length) {
+      console.warn('⚠️  SwiftDoc email delivery issue:', emailErrors.join('; '));
+    } else {
+      console.log('✅ SwiftDoc emails sent to tenant and agent');
+    }
 
-    return docUrl;
+    // The document exists and the in-app link works even if email delivery failed,
+    // so still return the url — but surface the email problem so it can be recorded.
+    return {
+      url:   docUrl,
+      error: emailErrors.length ? `Doc generated; SwiftDoc email delivery failed: ${emailErrors.join('; ')}` : null,
+    };
 
   } catch (err) {
     console.error('❌ SwiftDoc generation failed:', err.message);
-    return null;
+    return { url: null, error: err.message };
   }
 };
 

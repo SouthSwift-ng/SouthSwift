@@ -66,15 +66,22 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
     const agent   = agentRes.rows[0];
 
     try {
-      const docUrl = await generateSwiftDoc({ deal: updatedDeal, listing, tenant, agent });
+      const { url: docUrl, error: docError } = await generateSwiftDoc({ deal: updatedDeal, listing, tenant, agent });
       if (docUrl) {
         await pool.query(
-          "UPDATE deals SET swiftdoc_url=$1, swiftdoc_generated=true, status='docs_generated' WHERE id=$2",
-          [docUrl, updatedDeal.id]
+          "UPDATE deals SET swiftdoc_url=$1, swiftdoc_generated=true, swiftdoc_error=$2, status='docs_generated' WHERE id=$3",
+          [docUrl, docError, updatedDeal.id]
+        );
+      } else {
+        // Generation failed — record WHY instead of leaving the deal silently doc-less
+        await pool.query(
+          "UPDATE deals SET swiftdoc_error=$1 WHERE id=$2",
+          [docError || 'Unknown SwiftDoc error', updatedDeal.id]
         );
       }
     } catch (docErr) {
       console.error('Webhook SwiftDoc error:', docErr.message);
+      await pool.query("UPDATE deals SET swiftdoc_error=$1 WHERE id=$2", [docErr.message, updatedDeal.id]).catch(() => {});
     }
 
     await pool.query("UPDATE listings SET is_available=false WHERE id=$1", [updatedDeal.listing_id]);
