@@ -224,10 +224,12 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS cancelled_by UUID REFERENCES users(id);
     `);
 
-    // Record SwiftDoc / email failure reasons instead of swallowing them silently
+    // Record SwiftDoc / email failure reasons instead of swallowing them silently,
+    // and track refunds so the admin refund path stays idempotent.
     await client.query(`
       ALTER TABLE deals
-        ADD COLUMN IF NOT EXISTS swiftdoc_error TEXT;
+        ADD COLUMN IF NOT EXISTS swiftdoc_error TEXT,
+        ADD COLUMN IF NOT EXISTS refunded_at    TIMESTAMP;
     `);
 
     // Allow 'archived' status on existing databases (CHECK constraint predates it)

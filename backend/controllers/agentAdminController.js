@@ -367,7 +367,13 @@ const adminController = {
       if (!deal.account_number || !deal.bank_code)
         return res.status(400).json({ error: 'Agent has no bank account on record. Ask agent to update their profile.' });
 
-      // Atomically mark funds as released to prevent double-release
+      // Validate the payout amount BEFORE doing anything irreversible (BIGINT columns come back
+      // as strings from pg, so coerce explicitly; guard against negative/NaN legacy values).
+      const transferAmount = (Number(deal.rent_amount) - Number(deal.service_fee_landlord)) * 100;
+      if (!Number.isFinite(transferAmount) || transferAmount <= 0)
+        return res.status(400).json({ error: `Invalid payout amount for this deal (₦${transferAmount / 100}). Check its rent and fee values.` });
+
+      // Atomically claim the release to prevent concurrent double-release.
       const lockResult = await pool.query(
         "UPDATE deals SET funds_released_at=NOW(), updated_at=NOW() WHERE id=$1 AND funds_released_at IS NULL RETURNING id",
         [req.params.id]
@@ -375,46 +381,124 @@ const adminController = {
       if (!lockResult.rows.length)
         return res.status(400).json({ error: 'Funds already released for this deal.' });
 
-      let recipientCode = deal.paystack_recipient_code;
+      // From here, ANY failure must release the lock so the payout can be retried — otherwise the
+      // deal would look "released" while no money was sent. The deterministic transfer reference
+      // (SS-RELEASE-<dealId>) lets Paystack reject a duplicate, so a retry can never double-pay.
+      try {
+        let recipientCode = deal.paystack_recipient_code;
 
-      if (!recipientCode) {
-        const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
-          type:           'nuban',
-          name:           deal.account_name || deal.agent_full_name,
-          account_number: deal.account_number,
-          bank_code:      deal.bank_code,
-          currency:       'NGN',
+        if (!recipientCode) {
+          const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
+            type:           'nuban',
+            name:           deal.account_name || deal.agent_full_name,
+            account_number: deal.account_number,
+            bank_code:      deal.bank_code,
+            currency:       'NGN',
+          }, { headers: paystackHeaders });
+
+          recipientCode = recipRes.data.data.recipient_code;
+
+          await pool.query(
+            'UPDATE agent_profiles SET paystack_recipient_code=$1 WHERE user_id=$2',
+            [recipientCode, deal.agent_id]
+          );
+        }
+
+        const transferRes = await axios.post('https://api.paystack.co/transfer', {
+          source:    'balance',
+          amount:    transferAmount,
+          recipient: recipientCode,
+          reason:    `SouthSwift Deal ${deal.id.slice(0,8)} — Property Rental`,
+          reference: `SS-RELEASE-${deal.id}`,
         }, { headers: paystackHeaders });
 
-        recipientCode = recipRes.data.data.recipient_code;
+        const transferCode = transferRes.data.data.transfer_code;
 
         await pool.query(
-          'UPDATE agent_profiles SET paystack_recipient_code=$1 WHERE user_id=$2',
-          [recipientCode, deal.agent_id]
+          "UPDATE deals SET status='completed', notes=$1 WHERE id=$2",
+          [`Paystack transfer: ${transferCode}`, req.params.id]
         );
+
+        res.json({ message: 'Funds disbursed via Paystack Transfer.', transfer_code: transferCode });
+      } catch (transferErr) {
+        // Roll back the release lock — no money was sent, so the admin can safely retry.
+        await pool.query(
+          "UPDATE deals SET funds_released_at=NULL, updated_at=NOW() WHERE id=$1",
+          [req.params.id]
+        ).catch(() => {});
+        console.error('Fund transfer failed (lock released for retry):', transferErr.response?.data || transferErr.message);
+        return res.status(502).json({ error: 'Paystack transfer failed. No funds were sent — you can retry.' });
       }
-
-      const transferAmount = (deal.rent_amount - deal.service_fee_landlord) * 100;
-
-      const transferRes = await axios.post('https://api.paystack.co/transfer', {
-        source:    'balance',
-        amount:    transferAmount,
-        recipient: recipientCode,
-        reason:    `SouthSwift Deal ${deal.id.slice(0,8)} — Property Rental`,
-        reference: `SS-RELEASE-${deal.id.slice(0,8)}-${Date.now()}`,
-      }, { headers: paystackHeaders });
-
-      const transferCode = transferRes.data.data.transfer_code;
-
-      await pool.query(
-        "UPDATE deals SET status='completed', notes=$1 WHERE id=$2",
-        [`Paystack transfer: ${transferCode}`, req.params.id]
-      );
-
-      res.json({ message: 'Funds disbursed via Paystack Transfer.', transfer_code: transferCode });
     } catch (err) {
       console.error('Fund release error:', err.response?.data || err.message);
       res.status(500).json({ error: 'Fund release failed. Please try again or contact support.' });
+    }
+  },
+
+  // PUT /api/admin/deals/:id/refund — refund the tenant's escrow (tenant-wins dispute, unwind, etc.)
+  refundDeal: async (req, res) => {
+    const axios = require('axios');
+    const paystackHeaders = {
+      Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json',
+    };
+    try {
+      const dealResult = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
+      if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+      const deal = dealResult.rows[0];
+
+      if (deal.funds_released_at)
+        return res.status(400).json({ error: 'Funds were already released to the agent — cannot refund.' });
+      if (deal.refunded_at)
+        return res.status(400).json({ error: 'This deal has already been refunded.' });
+      if (!deal.paystack_reference)
+        return res.status(400).json({ error: 'No payment reference on this deal — nothing to refund.' });
+      if (!['escrow_held','docs_generated','movein_pending','disputed'].includes(deal.status))
+        return res.status(400).json({ error: `Cannot refund a deal in status: ${deal.status}` });
+
+      // Atomically claim the refund (and re-assert funds not released) to prevent double-refund.
+      const lock = await pool.query(
+        "UPDATE deals SET refunded_at=NOW(), updated_at=NOW() WHERE id=$1 AND refunded_at IS NULL AND funds_released_at IS NULL RETURNING id",
+        [req.params.id]
+      );
+      if (!lock.rows.length)
+        return res.status(400).json({ error: 'Refund already in progress, already done, or funds already released.' });
+
+      // If anything fails, release the claim so it can be retried — no money was returned yet.
+      // Paystack itself rejects a duplicate refund on the same transaction, so a retry can't double-refund.
+      try {
+        const refundRes = await axios.post('https://api.paystack.co/refund', {
+          transaction: deal.paystack_reference, // omit amount → full refund of the captured charge
+        }, { headers: paystackHeaders });
+
+        await pool.query(
+          "UPDATE deals SET status='cancelled', notes=$1, updated_at=NOW() WHERE id=$2",
+          [`Refunded via Paystack (txn ${deal.paystack_reference})`, req.params.id]
+        );
+
+        const { sendEmail } = require('./emailController');
+        const tenantRes = await pool.query('SELECT email, full_name FROM users WHERE id=$1', [deal.tenant_id]);
+        const tenant = tenantRes.rows[0];
+        if (tenant?.email) {
+          await sendEmail({
+            to: tenant.email,
+            subject: '🛡️ SouthSwift — Refund Initiated',
+            html: `<p>Dear ${tenant.full_name}, a refund of ₦${Number(deal.total_paid).toLocaleString()} has been initiated to your original payment method. Refunds typically settle within 14–28 business days.</p>`,
+          });
+        }
+
+        res.json({ message: 'Refund initiated via Paystack.', status: refundRes.data?.data?.status || 'pending' });
+      } catch (refundErr) {
+        await pool.query(
+          "UPDATE deals SET refunded_at=NULL, updated_at=NOW() WHERE id=$1",
+          [req.params.id]
+        ).catch(() => {});
+        console.error('Refund failed (claim released for retry):', refundErr.response?.data || refundErr.message);
+        return res.status(502).json({ error: 'Paystack refund failed. No refund was made — you can retry.' });
+      }
+    } catch (err) {
+      console.error('Refund handler error:', err.message);
+      res.status(500).json({ error: 'Refund failed. Please try again or contact support.' });
     }
   },
 

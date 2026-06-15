@@ -319,47 +319,51 @@ const verifyPayment = async (req, res) => {
 
 // POST /api/deals/:id/confirm-movein — tenant confirms move-in, releases funds
 const confirmMoveIn = async (req, res) => {
+  const client = await pool.connect();
   try {
-    const dealResult = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
-    if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    await client.query('BEGIN');
+
+    // Lock the deal row so concurrent confirmations can't race the status/count checks.
+    const dealResult = await client.query('SELECT * FROM deals WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!dealResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Deal not found.' }); }
 
     const deal = dealResult.rows[0];
-    if (deal.tenant_id !== req.user.id) return res.status(403).json({ error: 'Not authorised.' });
-    if (!['escrow_held','docs_generated'].includes(deal.status))
+    if (deal.tenant_id !== req.user.id) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Not authorised.' }); }
+    if (!['escrow_held','docs_generated'].includes(deal.status)) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: `Cannot confirm move-in at status: ${deal.status}` });
+    }
 
-    const agentRes  = await pool.query('SELECT * FROM users WHERE id=$1', [deal.agent_id]);
-    const tenantRes = await pool.query('SELECT * FROM users WHERE id=$1', [deal.tenant_id]);
-    const agent = agentRes.rows[0]; const tenant = tenantRes.rows[0];
+    const agentRes  = await client.query('SELECT full_name, phone FROM users WHERE id=$1', [deal.agent_id]);
+    const tenantRes = await client.query('SELECT full_name FROM users WHERE id=$1', [deal.tenant_id]);
+    const agent  = agentRes.rows[0]  || {};
+    const tenant = tenantRes.rows[0] || {};
 
-    // ── Room share: check if all slots are now confirmed ──────────────────────
+    // ── Room share: complete all slots once the configured number of roommates confirm ──
+    // Funds are NOT auto-released here — the admin release path performs the actual transfer
+    // per slot. (Previously this set funds_released_at, which permanently blocked that path.)
     if (deal.is_room_share_deal) {
-      const listingRes = await pool.query('SELECT * FROM listings WHERE id=$1', [deal.listing_id]);
+      const listingRes = await client.query('SELECT * FROM listings WHERE id=$1 FOR UPDATE', [deal.listing_id]);
       const listing = listingRes.rows[0];
+      if (!listing) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Listing record missing.' }); }
 
-      // Count how many room share deals for this listing already completed (excluding this one)
-      const countRes = await pool.query(`
-        SELECT COUNT(*) FROM deals
-        WHERE listing_id=$1 AND is_room_share_deal=true AND status='completed'
-      `, [deal.listing_id]);
-      const completedSoFar = parseInt(countRes.rows[0].count);
+      const countRes = await client.query(
+        "SELECT COUNT(*) FROM deals WHERE listing_id=$1 AND is_room_share_deal=true AND status='completed'",
+        [deal.listing_id]
+      );
+      const completedSoFar = parseInt(countRes.rows[0].count, 10);
       const willBeCompleted = completedSoFar + 1;
 
       if (willBeCompleted >= listing.room_share_slots) {
-        // All roommates confirmed — complete all room share deals and release funds
-        await pool.query(
-          `UPDATE deals SET status='completed', tenant_confirmed_at=NOW(), funds_released_at=NOW(), updated_at=NOW()
+        // Final confirmation — complete every funded room-share slot (this deal included).
+        await client.query(
+          `UPDATE deals SET status='completed', tenant_confirmed_at=COALESCE(tenant_confirmed_at, NOW()), updated_at=NOW()
            WHERE listing_id=$1 AND is_room_share_deal=true AND status IN ('escrow_held','docs_generated','movein_pending')`,
           [deal.listing_id]
         );
-        // Mark this deal too
-        await pool.query(
-          "UPDATE deals SET status='completed', tenant_confirmed_at=NOW(), funds_released_at=NOW(), updated_at=NOW() WHERE id=$1",
-          [deal.id]
-        );
-        await pool.query(
-          'UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]
-        );
+        await client.query('UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]);
+        await client.query('COMMIT');
+
         await sendEmail({
           to: 'ceo@southswift.com.ng',
           subject: '🏠 ADMIN: Room Share Fund Release Required',
@@ -367,33 +371,31 @@ const confirmMoveIn = async (req, res) => {
             <h2>All Room Share Tenants Confirmed Move-In</h2>
             <p><strong>Listing ID:</strong> ${deal.listing_id}</p>
             <p><strong>Agent:</strong> ${agent.full_name} — ${agent.phone}</p>
-            <p>All ${listing.room_share_slots} room share tenants have confirmed. Please release funds.</p>
+            <p>All ${listing.room_share_slots} room-share tenants have confirmed. Please release funds for each slot via the admin panel.</p>
           `
         });
-        return res.json({ message: '✅ All roommates confirmed! Funds are being released. Thank you for using SouthSwift.' });
-      } else {
-        // Not all confirmed yet — mark this deal as movein_pending
-        await pool.query(
-          "UPDATE deals SET status='movein_pending', tenant_confirmed_at=NOW(), updated_at=NOW() WHERE id=$1",
-          [deal.id]
-        );
-        const remaining = listing.room_share_slots - willBeCompleted;
-        return res.json({
-          message: `✅ Your move-in is confirmed. Funds will release when all ${listing.room_share_slots} roommates confirm. ${remaining} still pending.`
-        });
+        return res.json({ message: '✅ All roommates confirmed! Funds will be released to your agent shortly. Thank you for using SouthSwift.' });
       }
+
+      // Not all confirmed yet — mark just this slot confirmed.
+      await client.query(
+        "UPDATE deals SET status='movein_pending', tenant_confirmed_at=NOW(), updated_at=NOW() WHERE id=$1",
+        [deal.id]
+      );
+      await client.query('COMMIT');
+      const remaining = listing.room_share_slots - willBeCompleted;
+      return res.json({
+        message: `✅ Your move-in is confirmed. Funds release when all ${listing.room_share_slots} roommates confirm. ${remaining} still pending.`
+      });
     }
 
-    // ── Standard (non-room-share) deal — mark movein confirmed, admin releases funds separately
-    await pool.query(
+    // ── Standard (non-room-share) deal — mark confirmed; admin releases funds separately ──
+    await client.query(
       "UPDATE deals SET status='completed', tenant_confirmed_at=NOW(), updated_at=NOW() WHERE id=$1",
       [deal.id]
     );
-
-    // Update agent deal count
-    await pool.query(
-      'UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]
-    );
+    await client.query('UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]);
+    await client.query('COMMIT');
 
     await sendEmail({
       to: 'ceo@southswift.com.ng',
@@ -401,16 +403,20 @@ const confirmMoveIn = async (req, res) => {
       html: `
         <h2>Tenant Confirmed Move-In</h2>
         <p><strong>Deal ID:</strong> ${deal.id}</p>
-        <p><strong>Amount to release:</strong> ₦${(deal.rent_amount - deal.service_fee_landlord).toLocaleString()}</p>
+        <p><strong>Amount to release:</strong> ₦${(Number(deal.rent_amount) - Number(deal.service_fee_landlord)).toLocaleString()}</p>
         <p><strong>Agent:</strong> ${agent.full_name} — ${agent.phone}</p>
         <p><strong>Tenant:</strong> ${tenant.full_name}</p>
-        <p>Please process fund release to landlord/agent immediately.</p>
+        <p>Please process fund release to the agent.</p>
       `
     });
 
     res.json({ message: '✅ Move-in confirmed. Funds are being released. Thank you for using SouthSwift.' });
   } catch (err) {
-    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('confirmMoveIn error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Something went wrong.' });
+  } finally {
+    client.release();
   }
 };
 
