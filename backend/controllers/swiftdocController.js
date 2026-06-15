@@ -8,6 +8,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const PDFDocument = require('pdfkit');
 const cloudinary  = require('cloudinary').v2;
 const { sendEmail } = require('./emailController');
+const { escapeHtml } = require('../utils/escapeHtml');
 const { Readable } = require('stream');
 
 cloudinary.config({
@@ -281,9 +282,9 @@ const generateSwiftDoc = async ({ deal, listing, tenant, agent }) => {
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;">
         <h1 style="color:#1B4332;font-family:Georgia,serif;">South<span style="color:#C8963C;">Swift</span></h1>
         <h2 style="color:#1B4332;">Your SwiftDoc is ready</h2>
-        <p style="color:#444;font-size:15px;line-height:1.7;">Hi ${name},</p>
+        <p style="color:#444;font-size:15px;line-height:1.7;">Hi ${escapeHtml(name)},</p>
         <p style="color:#444;font-size:15px;line-height:1.7;">
-          Your AI-generated tenancy agreement for <strong>${listing.address}, ${listing.city}</strong>
+          Your AI-generated tenancy agreement for <strong>${escapeHtml(listing.address)}, ${escapeHtml(listing.city)}</strong>
           has been prepared and is ready to download.
         </p>
         <div style="background:#F0F9F0;border-radius:12px;padding:18px 20px;margin:20px 0;">

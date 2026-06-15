@@ -40,11 +40,30 @@ const PORT = process.env.PORT || 5000;
 // ── TRUST RENDER'S PROXY — required so req.ip / X-Forwarded-For work for rate limiting ──
 app.set('trust proxy', 1);
 
-// ── JWT SECRET GUARD — refuse to start with weak/default secrets ────────────
+// ── JWT SECRET GUARD — refuse to start with a weak/default secret in ANY environment ──
+// (Fatal everywhere: a known secret means anyone can forge an admin token, so it must never
+//  be used even in dev. Set a strong random JWT_SECRET locally too.)
 const WEAK_SECRETS = ['SouthSwift_JWT_SuperSecret_2026_ChangeInProduction', 'changeme', 'secret', 'jwt_secret'];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || WEAK_SECRETS.includes(process.env.JWT_SECRET)) {
   console.error('❌ FATAL: JWT_SECRET is missing, too short (min 32 chars), or a known default. Set a strong random secret.');
-  if (process.env.NODE_ENV === 'production') process.exit(1);
+  process.exit(1);
+}
+
+// ── CONFIG GUARD — surface missing config loudly at boot instead of failing mid-request ──
+const REQUIRED_ENV = [
+  'DATABASE_URL', 'PAYSTACK_SECRET_KEY', 'CLIENT_URL',
+  'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET',
+  'EMAIL_USER', 'EMAIL_PASS',
+];
+const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`⚠️  Missing environment variables: ${missingEnv.join(', ')} — dependent features will fail until set.`);
+  // In production, missing DB/payment config is fatal — fail the deploy rather than serve broken money flows.
+  const fatal = missingEnv.filter(k => ['DATABASE_URL', 'PAYSTACK_SECRET_KEY'].includes(k));
+  if (process.env.NODE_ENV === 'production' && fatal.length) {
+    console.error(`❌ FATAL: cannot run in production without ${fatal.join(', ')}.`);
+    process.exit(1);
+  }
 }
 
 // ── SECURITY & PERFORMANCE ────────────────────────────────────────────────────
@@ -75,15 +94,25 @@ app.use('/api/payments', rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message:
 const allowedOrigins = [
   'https://southswift.com.ng',
   'https://www.southswift.com.ng',
+  'https://southswift.vercel.app',   // production Vercel domain
   process.env.CLIENT_URL,
+  ...(process.env.EXTRA_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
 ].filter(Boolean);
+
+// Vercel preview deployments of THIS project. Set VERCEL_TEAM_SLUG in the environment to pin
+// previews to your team (recommended) — i.e. southswift-<hash>-<team>.vercel.app — so another
+// Vercel account can't spin up a "southswift-*" project that satisfies CORS. Auth here is
+// Bearer-token (not cookies), which already limits the practical risk of a loose match.
+const teamSlug = (process.env.VERCEL_TEAM_SLUG || '').replace(/[^a-z0-9-]/gi, '');
+const previewRegex = teamSlug
+  ? new RegExp(`^https:\\/\\/southswift-[a-z0-9-]+-${teamSlug}\\.vercel\\.app$`)
+  : /^https:\/\/southswift-[a-z0-9]+(?:-[a-z0-9-]+)?\.vercel\.app$/;
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    // Allow Vercel preview deployments: must end with .vercel.app and contain 'southswift'
-    if (/^https:\/\/southswift[a-z0-9-]*\.vercel\.app$/.test(origin)) return callback(null, true);
+    if (previewRegex.test(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,

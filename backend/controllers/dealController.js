@@ -2,6 +2,7 @@ const axios    = require('axios');
 const { pool } = require('../config/db');
 const { generateSwiftDoc } = require('./swiftdocController');
 const { sendEmail }         = require('./emailController');
+const { escapeHtml }        = require('../utils/escapeHtml');
 
 // ── PAYSTACK HELPERS ─────────────────────────────────────────────────────────
 const paystackHeaders = {
@@ -24,7 +25,7 @@ async function runSwiftDocBackground({ deal, listing, tenant, agent }) {
         subject: '🛡️ SouthSwift — Funds in Escrow. Document Ready.',
         html: `
           <h2>Your SwiftShield escrow is active</h2>
-          <p>Dear ${tenant.full_name},</p>
+          <p>Dear ${escapeHtml(tenant.full_name)},</p>
           <p>₦${Number(deal.rent_amount).toLocaleString()} is now held securely in SwiftShield escrow.</p>
           <p>Your tenancy agreement (SwiftDoc) has been generated: <a href="${docUrl}">Download Agreement</a></p>
           <p>Once you move in and confirm, funds will be released to your landlord.</p>
@@ -36,8 +37,8 @@ async function runSwiftDocBackground({ deal, listing, tenant, agent }) {
         subject: '🛡️ SouthSwift — Payment secured in escrow for your listing',
         html: `
           <h2>Escrow payment received</h2>
-          <p>Dear ${agent.full_name},</p>
-          <p>A tenant has secured ₦${Number(deal.rent_amount).toLocaleString()} in SwiftShield escrow for: ${listing.title}</p>
+          <p>Dear ${escapeHtml(agent.full_name)},</p>
+          <p>A tenant has secured ₦${Number(deal.rent_amount).toLocaleString()} in SwiftShield escrow for: ${escapeHtml(listing.title)}</p>
           <p>Funds will be released after the tenant confirms their move-in.</p>
         `
       });
@@ -370,7 +371,7 @@ const confirmMoveIn = async (req, res) => {
           html: `
             <h2>All Room Share Tenants Confirmed Move-In</h2>
             <p><strong>Listing ID:</strong> ${deal.listing_id}</p>
-            <p><strong>Agent:</strong> ${agent.full_name} — ${agent.phone}</p>
+            <p><strong>Agent:</strong> ${escapeHtml(agent.full_name)} — ${escapeHtml(agent.phone)}</p>
             <p>All ${listing.room_share_slots} room-share tenants have confirmed. Please release funds for each slot via the admin panel.</p>
           `
         });
@@ -404,8 +405,8 @@ const confirmMoveIn = async (req, res) => {
         <h2>Tenant Confirmed Move-In</h2>
         <p><strong>Deal ID:</strong> ${deal.id}</p>
         <p><strong>Amount to release:</strong> ₦${(Number(deal.rent_amount) - Number(deal.service_fee_landlord)).toLocaleString()}</p>
-        <p><strong>Agent:</strong> ${agent.full_name} — ${agent.phone}</p>
-        <p><strong>Tenant:</strong> ${tenant.full_name}</p>
+        <p><strong>Agent:</strong> ${escapeHtml(agent.full_name)} — ${escapeHtml(agent.phone)}</p>
+        <p><strong>Tenant:</strong> ${escapeHtml(tenant.full_name)}</p>
         <p>Please process fund release to the agent.</p>
       `
     });
@@ -443,7 +444,7 @@ const raiseDispute = async (req, res) => {
     await sendEmail({
       to: 'ceo@southswift.com.ng',
       subject: '⚠️ ADMIN: Deal Dispute Raised',
-      html: `<p>Deal ${req.params.id} has been disputed by ${req.user.email}.</p><p>Reason: ${reason}</p>`
+      html: `<p>Deal ${escapeHtml(req.params.id)} has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`
     });
     res.json({ message: 'Dispute raised. SouthSwift team will review within 24 hours.' });
   } catch (err) {

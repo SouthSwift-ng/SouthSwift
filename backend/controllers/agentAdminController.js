@@ -1,6 +1,7 @@
 // ── AGENT CONTROLLER ─────────────────────────────────────────────────────────
 const { pool } = require('../config/db');
 const axios    = require('axios');
+const { escapeHtml } = require('../utils/escapeHtml');
 
 // ── DOJAH VERIFICATION ENGINE ────────────────────────────────────────────────
 const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
@@ -158,7 +159,7 @@ const agentController = {
             html: `
               <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                 <h1 style="color:#1B4332">South<span style="color:#C8963C">Swift</span></h1>
-                <h2 style="color:#1B4332">Congratulations, ${agent.full_name.split(' ')[0]}!</h2>
+                <h2 style="color:#1B4332">Congratulations, ${escapeHtml(agent.full_name.split(' ')[0])}!</h2>
                 <p style="color:#444;font-size:15px;line-height:1.7">
                   Your identity has been verified by SouthSwift. Your green Verified Agent badge
                   is now active. You can start posting listings immediately.
@@ -195,7 +196,7 @@ const agentController = {
             to: agent.email,
             subject: '⚠️ SouthSwift — Verification Unsuccessful',
             html: `
-              <p>Dear ${agent.full_name.split(' ')[0]},</p>
+              <p>Dear ${escapeHtml(agent.full_name.split(' ')[0])},</p>
               <p>We were unable to verify your identity automatically. ${dojahResult.reason}</p>
               <p>Please ensure your selfie clearly shows your face and your ID document is legible.
               You may resubmit at any time. If you believe this is an error, contact us at
@@ -214,7 +215,7 @@ const agentController = {
           to: 'ceo@southswift.com.ng',
           subject: `🔍 Manual Review Required — ${agent.full_name}`,
           html: `
-            <p>Agent ${agent.full_name} (${agent.email}) requires manual review.</p>
+            <p>Agent ${escapeHtml(agent.full_name)} (${escapeHtml(agent.email)}) requires manual review.</p>
             <p>Face match score: ${dojahResult.face_score}%</p>
             <p>NIN match: ${dojahResult.nin_match ? 'Yes' : 'Partial'}</p>
             <p>Reason: ${dojahResult.reason}</p>
@@ -483,7 +484,7 @@ const adminController = {
           await sendEmail({
             to: tenant.email,
             subject: '🛡️ SouthSwift — Refund Initiated',
-            html: `<p>Dear ${tenant.full_name}, a refund of ₦${Number(deal.total_paid).toLocaleString()} has been initiated to your original payment method. Refunds typically settle within 14–28 business days.</p>`,
+            html: `<p>Dear ${escapeHtml(tenant.full_name)}, a refund of ₦${Number(deal.total_paid).toLocaleString()} has been initiated to your original payment method. Refunds typically settle within 14–28 business days.</p>`,
           });
         }
 
@@ -547,12 +548,12 @@ const adminController = {
       await sendEmail({
         to: tenant.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${tenant.full_name}, your dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p><p>${winnerLabel}</p>`,
+        html: `<p>Dear ${escapeHtml(tenant.full_name)}, your dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
       });
       await sendEmail({
         to: agent.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${agent.full_name}, the dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${resolution}</p><p>${winnerLabel}</p>`,
+        html: `<p>Dear ${escapeHtml(agent.full_name)}, the dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
       });
 
       // Alert admin for manual fund routing
