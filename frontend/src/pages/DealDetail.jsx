@@ -6,7 +6,8 @@ import {
   initiateDeal, verifyPayment, isPaystackCheckoutUrl,
   createListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
-  getAgent, submitReview, getAgentReviews, getWaitlist
+  getAgent, submitReview, getAgentReviews, getWaitlist,
+  getAllListings, deleteListingsBulk
 } from '../utils/api';
 import { useAuth } from '../App';
 import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare } from 'lucide-react';
@@ -647,6 +648,12 @@ export function AdminPanel() {
   const [disputes, setDisputes] = useState([]);
   const [resForm, setResForm]   = useState({});
   const [waitlistData, setWaitlistData] = useState([]);
+  const [allListings, setAllListings] = useState([]);
+  const [selectedListings, setSelectedListings] = useState(new Set());
+  const [deletingListings, setDeletingListings] = useState(false);
+
+  const refreshAllListings = () =>
+    getAllListings().then(r => setAllListings(r.data)).catch(()=>{});
 
   useEffect(() => {
     getDashboard().then(r=>setStats(r.data)).catch(()=>{});
@@ -656,7 +663,33 @@ export function AdminPanel() {
       setDisputes(r.data.filter(d => d.status === 'disputed'));
     }).catch(() => {});
     getWaitlist().then(r => setWaitlistData(r.data)).catch(() => {});
+    refreshAllListings();
   }, []);
+
+  const toggleListingSelected = (id) => setSelectedListings(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedListings);
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} listing(s)? Listings with completed or in-escrow deals will be skipped.`)) return;
+    setDeletingListings(true);
+    try {
+      const r = await deleteListingsBulk(ids);
+      const msg = r.data.blocked_count
+        ? `Deleted ${r.data.deleted_count}. Skipped ${r.data.blocked_count} (active deals).`
+        : `Deleted ${r.data.deleted_count} listing(s).`;
+      toast.success(msg);
+      setSelectedListings(new Set());
+      await refreshAllListings();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Bulk delete failed.');
+    }
+    setDeletingListings(false);
+  };
 
   const handleVerify = async (userId, action) => {
     try {
@@ -671,7 +704,7 @@ export function AdminPanel() {
       <div style={ps.container}>
         <h1 style={ps.pageTitle}>🛡️ SouthSwift Admin</h1>
         <div style={ps.tabs}>
-          {['dashboard','agents','deals','disputes','waitlist'].map(t=>(
+          {['dashboard','agents','listings','deals','disputes','waitlist'].map(t=>(
             <button key={t} onClick={()=>setTab(t)} style={{...ps.tab, ...(tab===t?ps.tabA:{})}}>
               {t.charAt(0).toUpperCase()+t.slice(1)}
             </button>
@@ -713,6 +746,43 @@ export function AdminPanel() {
                 </div>
               ))
             }
+          </div>
+        )}
+
+        {tab==='listings' && (
+          <div>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, gap:12, flexWrap:'wrap'}}>
+              <h3 style={{color:G, margin:0}}>All Listings ({allListings.length})</h3>
+              <button
+                onClick={handleBulkDelete}
+                disabled={!selectedListings.size || deletingListings}
+                style={{background:'#DC2626', color:'white', border:'none', padding:'8px 16px',
+                        borderRadius:8, cursor: selectedListings.size ? 'pointer' : 'not-allowed',
+                        fontWeight:700, fontSize:13, opacity: selectedListings.size ? 1 : 0.5}}>
+                {deletingListings ? 'Deleting…' : `Delete Selected (${selectedListings.size})`}
+              </button>
+            </div>
+            {allListings.length === 0 ? <p style={{color:'#888'}}>No listings.</p> : allListings.map(l => (
+              <div key={l.id} style={{...ps.dealRowA, gap:12}}>
+                <input type="checkbox"
+                  checked={selectedListings.has(l.id)}
+                  onChange={() => toggleListingSelected(l.id)}
+                  style={{width:18, height:18, cursor:'pointer', flexShrink:0}} />
+                <div style={{flex:2, minWidth:0}}>
+                  <div style={ps.agentName}>{l.title}</div>
+                  <div style={ps.agentDetail}>
+                    {l.city}, {l.state} · {l.bedrooms} bed · {l.property_type} · by {l.agent_name}
+                  </div>
+                  <div style={{...ps.agentDetail, fontSize:10, color:'#AAA'}}>{l.id}</div>
+                </div>
+                <div style={{textAlign:'right', flexShrink:0}}>
+                  <div style={{fontWeight:700, color:G}}>₦{Number(l.rent_price).toLocaleString()}</div>
+                  <div style={{fontSize:11, color: l.is_available ? '#166534' : '#DC2626'}}>
+                    {l.is_available ? 'Available' : 'Occupied'}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

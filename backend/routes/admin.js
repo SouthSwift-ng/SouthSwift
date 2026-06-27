@@ -14,5 +14,6 @@ router.put('/deals/:id/refund',       adminController.refundDeal);
 router.put('/deals/:id/resolve-dispute', adminController.resolveDispute);
 router.get('/users',                  adminController.getUsers);
 router.get('/listings',               adminController.getAllListings);
+router.delete('/listings',            adminController.deleteListingsBulk);
 
 module.exports = router;

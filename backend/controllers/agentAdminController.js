@@ -132,6 +132,38 @@ const agentController = {
       );
       const agent = userRes.rows[0];
 
+      // Pre-create Paystack Transfer Recipient so bad bank details fail HERE,
+      // not later when admin clicks "Release Funds". Failure is non-fatal —
+      // verification still proceeds and admin can retry on release.
+      if (req.body.account_number && req.body.bank_code && process.env.PAYSTACK_SECRET_KEY) {
+        try {
+          const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
+            type:           'nuban',
+            name:           req.body.account_name || agent.full_name,
+            account_number: req.body.account_number,
+            bank_code:      req.body.bank_code,
+            currency:       'NGN',
+          }, {
+            headers: {
+              Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          });
+          const recipientCode = recipRes.data?.data?.recipient_code;
+          if (recipientCode) {
+            await pool.query(
+              'UPDATE agent_profiles SET paystack_recipient_code=$1 WHERE user_id=$2',
+              [recipientCode, req.user.id]
+            );
+          }
+        } catch (paystackErr) {
+          // Bad bank code or unreachable Paystack — log it; admin release path will retry.
+          console.warn('Paystack recipient pre-create failed:',
+            paystackErr.response?.data?.message || paystackErr.message);
+        }
+      }
+
       // Run Dojah verification if API key is configured
       if (process.env.DOJAH_API_KEY && process.env.DOJAH_APP_ID) {
         const dojahResult = await verifyWithDojah({
@@ -244,6 +276,55 @@ const agentController = {
       );
       res.json(result.rows);
     } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
+  },
+
+  // GET /api/agents/banks — proxies Paystack /bank so the dropdown shows live, valid
+  // bank codes. Cached in-process for 6h to dodge Paystack rate limits.
+  getBanks: async (req, res) => {
+    try {
+      const now = Date.now();
+      const cache = agentController._bankCache;
+      if (cache && (now - cache.ts) < 6 * 60 * 60 * 1000) return res.json(cache.banks);
+      const r = await axios.get('https://api.paystack.co/bank?country=nigeria', {
+        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+        timeout: 10000,
+      });
+      const banks = (r.data?.data || [])
+        .map(b => ({ name: b.name, code: b.code }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      agentController._bankCache = { ts: now, banks };
+      res.json(banks);
+    } catch (err) {
+      console.error('Bank list fetch failed:', err.response?.data?.message || err.message);
+      res.status(502).json({ error: 'Could not fetch bank list. Please try again.' });
+    }
+  },
+
+  // POST /api/agents/resolve-account — proxies Paystack /bank/resolve so the agent
+  // sees the real account holder name before saving wrong details. Auth required so
+  // this can't be abused as a free account-name lookup service.
+  resolveAccount: async (req, res) => {
+    const { account_number, bank_code } = req.body;
+    if (!account_number || !bank_code)
+      return res.status(400).json({ error: 'Account number and bank code are required.' });
+    if (!/^\d{10}$/.test(String(account_number)))
+      return res.status(400).json({ error: 'Account number must be 10 digits.' });
+    try {
+      const r = await axios.get(
+        `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(account_number)}&bank_code=${encodeURIComponent(bank_code)}`,
+        {
+          headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+          timeout: 10000,
+        }
+      );
+      const data = r.data?.data;
+      if (!data?.account_name) return res.status(400).json({ error: 'Account not found at the selected bank.' });
+      res.json({ account_name: data.account_name, account_number: data.account_number });
+    } catch (err) {
+      const msg = err.response?.data?.message || 'Could not resolve account. Check the number and bank.';
+      console.warn('Account resolve failed:', msg);
+      res.status(400).json({ error: msg });
+    }
   },
 
   // POST /api/agents/intro-video — agent uploads/replaces their profile intro video
@@ -589,6 +670,54 @@ const adminController = {
       `);
       res.json(result.rows);
     } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
+  },
+
+  // DELETE /api/admin/listings — bulk delete. Refuses to delete any listing that has
+  // a paid (or in-flight) deal so money flows can't be orphaned. Returns counts.
+  deleteListingsBulk: async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length)
+      return res.status(400).json({ error: 'Provide an array of listing ids.' });
+    if (ids.length > 100)
+      return res.status(400).json({ error: 'Cannot delete more than 100 listings at once.' });
+    // Validate all ids are uuids — DB will reject otherwise but failing fast is friendlier.
+    const uuidRe = /^[0-9a-fA-F-]{36}$/;
+    if (!ids.every(id => uuidRe.test(id)))
+      return res.status(400).json({ error: 'One or more ids are not valid UUIDs.' });
+
+    try {
+      // Find listings with deals that are NOT safe to wipe (anything past payment_pending).
+      const guardRes = await pool.query(
+        `SELECT DISTINCT listing_id FROM deals
+         WHERE listing_id = ANY($1::uuid[])
+           AND status NOT IN ('initiated','payment_pending','cancelled','archived')`,
+        [ids]
+      );
+      const blocked = new Set(guardRes.rows.map(r => r.listing_id));
+      const deletable = ids.filter(id => !blocked.has(id));
+
+      if (!deletable.length) {
+        return res.status(400).json({
+          error: 'All selected listings have active or completed deals and cannot be deleted.',
+          blocked: ids,
+        });
+      }
+
+      const del = await pool.query(
+        'DELETE FROM listings WHERE id = ANY($1::uuid[]) RETURNING id',
+        [deletable]
+      );
+
+      res.json({
+        deleted: del.rows.map(r => r.id),
+        blocked: Array.from(blocked),
+        deleted_count: del.rowCount,
+        blocked_count: blocked.size,
+      });
+    } catch (err) {
+      console.error('Bulk delete error:', err.code || '', err.message);
+      res.status(500).json({ error: `Bulk delete failed: ${String(err.message || '').split('\n')[0].slice(0,200)}` });
+    }
   },
 };
 

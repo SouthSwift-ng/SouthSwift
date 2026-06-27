@@ -176,7 +176,14 @@ const createListing = async (req, res) => {
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
+    // Surface specific DB errors (CHECK constraint, type mismatch, etc.) so the agent
+    // can see WHY the create failed instead of a blanket "Failed to create listing."
+    console.error('createListing error:', err.code || '', err.message);
+    if (err.code === '23514')
+      return res.status(400).json({ error: 'Invalid value for one of: property type, bedrooms, or rent period.' });
+    if (err.code === '22003' || err.code === '22P02')
+      return res.status(400).json({ error: 'Rent price or coordinates are out of range. Please re-check the numbers.' });
+    res.status(500).json({ error: `Could not create listing: ${String(err.message || '').split('\n')[0].slice(0, 200)}` });
   }
 };
 
