@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo } from '../utils/api';
+import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, updateListing, deleteListing, getBanks, resolveAccount } from '../utils/api';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 
@@ -21,13 +21,82 @@ export function Dashboard() {
   const [verDocs, setVerDocs] = useState({ id_document: null, selfie: null });
   const [introVideo, setIntroVideo] = useState(null);
   const [introUploading, setIntroUploading] = useState(false);
+  const [editingListingId, setEditingListingId] = useState(null);
+  const [editForm, setEditForm] = useState({ title:'', rent_price:'', is_available:true });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [banks, setBanks] = useState([]);
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState('');
+
+  const refreshMyListings = () =>
+    getMyListings().then(r => setMyListings(r.data)).catch(()=>{});
+
+  const startEdit = (l) => {
+    setEditingListingId(l.id);
+    setEditForm({ title: l.title, rent_price: l.rent_price, is_available: l.is_available });
+  };
+
+  const cancelEdit = () => { setEditingListingId(null); setSavingEdit(false); };
+
+  const saveEdit = async () => {
+    if (!editForm.title.trim()) { toast.error('Title cannot be empty.'); return; }
+    const price = Number(editForm.rent_price);
+    if (!Number.isFinite(price) || price <= 0) { toast.error('Enter a valid rent price.'); return; }
+    setSavingEdit(true);
+    try {
+      await updateListing(editingListingId, {
+        title: editForm.title.trim(),
+        rent_price: price,
+        is_available: editForm.is_available,
+      });
+      toast.success('Listing updated.');
+      await refreshMyListings();
+      cancelEdit();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update listing.');
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async (l) => {
+    if (!window.confirm(`Delete "${l.title}"? This cannot be undone.`)) return;
+    try {
+      await deleteListing(l.id);
+      toast.success('Listing deleted.');
+      await refreshMyListings();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete listing.');
+    }
+  };
 
   useEffect(() => {
     getMyDeals().then(r => setDeals(r.data)).catch(()=>{});
     if (['agent','admin'].includes(user?.role)) {
       getMyListings().then(r => setMyListings(r.data)).catch(()=>{});
+      getBanks().then(r => setBanks(r.data)).catch(()=>{}); // best-effort; dropdown stays empty if down
     }
   }, []);
+
+  // Debounced Paystack /bank/resolve — fires once both fields look complete.
+  useEffect(() => {
+    if (!['agent','admin'].includes(user?.role)) return;
+    if (!/^\d{10}$/.test(verForm.account_number) || !verForm.bank_code) {
+      setResolveError('');
+      return;
+    }
+    setResolving(true);
+    setResolveError('');
+    const t = setTimeout(async () => {
+      try {
+        const r = await resolveAccount(verForm.account_number, verForm.bank_code);
+        setVerForm(f => ({...f, account_name: r.data.account_name}));
+      } catch (err) {
+        setResolveError(err.response?.data?.error || 'Could not resolve account.');
+      }
+      setResolving(false);
+    }, 600);
+    return () => { clearTimeout(t); setResolving(false); };
+  }, [verForm.account_number, verForm.bank_code, user?.role]);
 
   const handleVerify = async (e) => {
     e.preventDefault();
@@ -125,17 +194,50 @@ export function Dashboard() {
             {myListings.length===0
               ? <div style={s.empty}><Home size={40} color="#DDD"/><p>No listings yet.</p><Link to="/create-listing" style={s.linkBtn}>Create First Listing</Link></div>
               : myListings.map(l=>(
-                <div key={l.id} style={s.dealRow}>
-                  <div>
-                    <div style={s.dealTitle}>{l.title}</div>
-                    <div style={s.dealSub}>{l.city}, {l.state} · {l.bedrooms} bed · {l.property_type}</div>
-                  </div>
-                  <div style={s.dealRight}>
-                    <div style={s.dealAmt}>₦{Number(l.rent_price).toLocaleString()}</div>
-                    <div style={{...s.statusBadge, background:l.is_available?'#DCFCE7':'#FEE2E2', color:l.is_available?'#166534':'#DC2626'}}>
-                      {l.is_available?'Available':'Occupied'}
+                <div key={l.id} style={s.listingCard}>
+                  <div style={{...s.dealRow, border:'none', borderRadius:0, marginBottom:0}}>
+                    <div>
+                      <div style={s.dealTitle}>{l.title}</div>
+                      <div style={s.dealSub}>{l.city}, {l.state} · {l.bedrooms} bed · {l.property_type}</div>
+                    </div>
+                    <div style={s.dealRight}>
+                      <div style={s.dealAmt}>₦{Number(l.rent_price).toLocaleString()}</div>
+                      <div style={{...s.statusBadge, background:l.is_available?'#DCFCE7':'#FEE2E2', color:l.is_available?'#166534':'#DC2626'}}>
+                        {l.is_available?'Available':'Occupied'}
+                      </div>
                     </div>
                   </div>
+                  {editingListingId === l.id ? (
+                    <div style={s.editPanel}>
+                      <label style={s.label}>Title</label>
+                      <input style={s.input} type="text" value={editForm.title}
+                        onChange={e => setEditForm(f => ({...f, title: e.target.value}))} />
+                      <label style={s.label}>Rent Price (₦)</label>
+                      <input style={s.input} type="number" min="1" value={editForm.rent_price}
+                        onChange={e => setEditForm(f => ({...f, rent_price: e.target.value}))} />
+                      <label style={{...s.label, display:'flex', alignItems:'center', gap:8, marginTop:14}}>
+                        <input type="checkbox" checked={editForm.is_available}
+                          onChange={e => setEditForm(f => ({...f, is_available: e.target.checked}))} />
+                        Mark as available (uncheck if rented out)
+                      </label>
+                      <div style={{display:'flex', gap:8, marginTop:14}}>
+                        <button onClick={cancelEdit} disabled={savingEdit}
+                          style={{flex:1, background:'#F3F4F6', color:'#444', border:'none', padding:'10px',
+                                  borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:13}}>Cancel</button>
+                        <button onClick={saveEdit} disabled={savingEdit}
+                          style={{flex:1, background:G, color:'white', border:'none', padding:'10px',
+                                  borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:13,
+                                  opacity: savingEdit ? 0.6 : 1}}>
+                          {savingEdit ? 'Saving…' : 'Save Changes'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={s.rowActions}>
+                      <button onClick={() => startEdit(l)} style={s.editBtn}>Edit</button>
+                      <button onClick={() => handleDelete(l)} style={s.deleteBtn}>Delete</button>
+                    </div>
+                  )}
                 </div>
               ))
             }
@@ -162,22 +264,26 @@ export function Dashboard() {
                 placeholder="Tell tenants about your experience..."
                 onChange={e=>setVerForm(f=>({...f,bio:e.target.value}))} />
               <div>
-                <label style={s.label}>Bank Account Number</label>
-                <input style={s.input} type="text" placeholder="0123456789"
-                  value={verForm.account_number || ''}
-                  onChange={e => setVerForm(f => ({...f, account_number: e.target.value}))} />
-              </div>
-              <div>
-                <label style={s.label}>Bank Code (e.g. 058 for GTBank)</label>
-                <input style={s.input} type="text" placeholder="058"
+                <label style={s.label}>Bank</label>
+                <select style={s.input}
                   value={verForm.bank_code || ''}
-                  onChange={e => setVerForm(f => ({...f, bank_code: e.target.value}))} />
+                  onChange={e => setVerForm(f => ({...f, bank_code: e.target.value, account_name: ''}))}>
+                  <option value="">{banks.length ? 'Select your bank' : 'Loading banks…'}</option>
+                  {banks.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                </select>
               </div>
               <div>
-                <label style={s.label}>Account Name</label>
-                <input style={s.input} type="text" placeholder="As shown on your bank account"
-                  value={verForm.account_name || ''}
-                  onChange={e => setVerForm(f => ({...f, account_name: e.target.value}))} />
+                <label style={s.label}>Bank Account Number</label>
+                <input style={s.input} type="text" inputMode="numeric" maxLength={10} placeholder="10-digit account number"
+                  value={verForm.account_number || ''}
+                  onChange={e => setVerForm(f => ({...f, account_number: e.target.value.replace(/\D/g,''), account_name: ''}))} />
+                {resolving && <span style={{fontSize:11,color:'#888',marginTop:4,display:'block'}}>Looking up account…</span>}
+                {resolveError && <span style={{fontSize:11,color:'#DC2626',marginTop:4,display:'block'}}>{resolveError}</span>}
+                {verForm.account_name && !resolving && !resolveError && (
+                  <span style={{fontSize:12,color:'#166534',marginTop:6,display:'block',fontWeight:700}}>
+                    ✓ {verForm.account_name}
+                  </span>
+                )}
               </div>
               <div>
                 <label style={s.label}>Government ID Document</label>
@@ -251,6 +357,11 @@ const s = {
   label:     { display:'block', fontSize:12, fontWeight:700, color:'#444', marginBottom:5, marginTop:12 },
   input:     { width:'100%', border:'1px solid #DDD', borderRadius:8, padding:'10px 12px', fontSize:13, boxSizing:'border-box', outline:'none', resize:'vertical' },
   verBtn:    { background:G, color:'white', border:'none', padding:'11px 24px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14, marginTop:14 },
+  listingCard:{ background:'white', borderRadius:10, marginBottom:10, border:'1px solid #E5E7EB', overflow:'hidden' },
+  rowActions:{ display:'flex', gap:8, padding:'10px 16px', borderTop:'1px solid #F3F4F6', background:'#FAFAFA' },
+  editBtn:   { flex:1, background:'#F0F9F0', color:G, border:`1px solid ${G}`, padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
+  deleteBtn: { flex:1, background:'#FEE2E2', color:'#DC2626', border:'1px solid #FECACA', padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
+  editPanel: { padding:'16px', borderTop:'1px solid #F3F4F6', background:'#F8FAF8' },
 };
 
 export default Dashboard;

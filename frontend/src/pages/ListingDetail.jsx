@@ -99,6 +99,15 @@ export default function ListingDetail() {
   const [roomShare, setRoomShare] = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [dealMode, setDealMode] = useState('standard'); // 'standard' | 'room_share'
+  // SwiftDoc → SwiftCounsel → SwiftShield gate. Pure UI mask — no backend changes.
+  // 'booking' (date + lease) → 'swiftdoc' (tenant info) → 'swiftcounsel' (legal) → 'payment'.
+  const [step, setStep] = useState('booking');
+  const [docForm, setDocForm] = useState({
+    tenant_nin: '', occupation: '', employer: '',
+    next_of_kin_name: '', next_of_kin_phone: '',
+  });
+  const [docErrors, setDocErrors] = useState({});
+  const [legalAgreed, setLegalAgreed] = useState({ terms: false, escrow: false, accurate: false });
 
   useEffect(() => {
     getListing(id)
@@ -116,13 +125,43 @@ export default function ListingDetail() {
       .finally(() => setLoad(false));
   }, [id]);
 
-  const handleDeal = async () => {
+  // Step 1 → Step 2: validate the booking fields, then advance to SwiftDoc.
+  const handleContinueToSwiftDoc = () => {
     if (!user) { navigate('/login'); return; }
     const errors = {};
     if (!form.move_in_date) errors.move_in_date = 'Move-in date is required.';
     if (!form.lease_duration_months) errors.lease_duration_months = 'Lease duration is required.';
     if (Object.keys(errors).length) { setFormErrors(errors); return; }
     setFormErrors({});
+    setStep('swiftdoc');
+  };
+
+  // Step 2 → Step 3: validate SwiftDoc tenant info, then advance to SwiftCounsel.
+  const handleContinueToSwiftCounsel = () => {
+    const errors = {};
+    if (!docForm.tenant_nin || docForm.tenant_nin.replace(/\D/g,'').length !== 11)
+      errors.tenant_nin = 'Enter your 11-digit NIN.';
+    if (!docForm.occupation.trim()) errors.occupation = 'Occupation is required.';
+    if (!docForm.next_of_kin_name.trim()) errors.next_of_kin_name = 'Next of kin name is required.';
+    if (!docForm.next_of_kin_phone.replace(/\D/g,'').match(/^\d{10,14}$/))
+      errors.next_of_kin_phone = 'Enter a valid phone number.';
+    if (Object.keys(errors).length) { setDocErrors(errors); return; }
+    setDocErrors({});
+    setStep('swiftcounsel');
+  };
+
+  // Step 3 → Step 4: all three legal checkboxes must be ticked.
+  const handleContinueToPayment = () => {
+    if (!legalAgreed.terms || !legalAgreed.escrow || !legalAgreed.accurate) {
+      toast.error('Please tick all three legal acknowledgments to continue.');
+      return;
+    }
+    setStep('payment');
+  };
+
+  // Step 4 (final): fire the existing initiateDeal call. Backend is unchanged.
+  const handleDeal = async () => {
+    if (!user) { navigate('/login'); return; }
     setDealing(true);
     try {
       const res = await initiateDeal({
@@ -303,48 +342,175 @@ export default function ListingDetail() {
                 </div>
               )}
 
-              <div style={s.feeBreakdown}>
-                {(() => {
-                  const rent = dealRent;
-                  const tenantFee = Math.round(rent * 0.025);
-                  const landlordFee = Math.round(rent * 0.025);
-                  return (
-                    <>
-                      <div style={s.feeRow}><span>{isRoomShareDeal ? 'Per Person' : 'Rent'}</span><span style={{fontWeight:600}}>&#8358;{rent.toLocaleString()}</span></div>
-                      <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Tenant (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{tenantFee.toLocaleString()}</span></div>
-                      <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Landlord (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{landlordFee.toLocaleString()}</span></div>
-                      <div style={s.feeRow}><span style={{fontSize:11,color:'#888'}}>Total Platform Fee (5%)</span><span style={{fontSize:11,color:'#888'}}>&#8358;{(tenantFee+landlordFee).toLocaleString()}</span></div>
-                      <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{(rent+tenantFee).toLocaleString()}</span></div>
-                      <div style={s.feeRow}><span style={{fontSize:11,color:'#666'}}>Landlord Receives</span><span style={{fontSize:11,color:'#666'}}>&#8358;{(rent-landlordFee).toLocaleString()}</span></div>
-                    </>
-                  );
-                })()}
-              </div>
+              {(() => {
+                const rent = dealRent;
+                const tenantFee = Math.round(rent * 0.025);
+                const landlordFee = Math.round(rent * 0.025);
+                const total = rent + tenantFee;
+                const stepIdx = ['booking','swiftdoc','swiftcounsel','payment'].indexOf(step);
 
-              <label style={s.label}>Move-in Date *</label>
-              <input type="date" style={{...s.input, borderColor: formErrors.move_in_date ? '#DC2626' : '#DDD'}} value={form.move_in_date}
-                min={new Date().toISOString().split('T')[0]}
-                onChange={e => { setForm(f=>({...f,move_in_date:e.target.value})); setFormErrors(fe=>({...fe,move_in_date:''})); }}/>
-              {formErrors.move_in_date && <span style={s.fieldError}>{formErrors.move_in_date}</span>}
-              <label style={s.label}>Lease Duration *</label>
-              <select style={{...s.input, borderColor: formErrors.lease_duration_months ? '#DC2626' : '#DDD'}} value={form.lease_duration_months}
-                onChange={e => { setForm(f=>({...f,lease_duration_months:Number(e.target.value)})); setFormErrors(fe=>({...fe,lease_duration_months:''})); }}>
-                <option value="">Select duration</option>
-                {[6,12,18,24].map(m=><option key={m} value={m}>{m} months</option>)}
-              </select>
-              {formErrors.lease_duration_months && <span style={s.fieldError}>{formErrors.lease_duration_months}</span>}
-              <button onClick={handleDeal} disabled={dealing||dealBlocked||!form.move_in_date||!form.lease_duration_months}
-                style={{...s.dealBtn,opacity:(dealing||dealBlocked||!form.move_in_date||!form.lease_duration_months)?0.5:1}}>
-                {dealBlocked ? (isRoomShareDeal ? 'All Slots Filled' : 'Room Share Only') : dealing ? 'Initiating...' :
-                  isRoomShareDeal
-                    ? `Claim Your Slot - ₦${(dealRent + Math.round(dealRent*0.025)).toLocaleString()}`
-                    : 'Initiate SwiftShield Deal'}
-              </button>
-              <div style={s.trustRow}>
-                {['Escrow Protected','Legal Doc Included','Verified Agent'].map(t=>(
-                  <span key={t} style={s.trustTag}>v {t}</span>
-                ))}
-              </div>
+                return (
+                  <>
+                    <div style={s.stepRow}>
+                      {['Booking','SwiftDoc','SwiftCounsel','Pay'].map((label, i) => (
+                        <div key={label} style={{
+                          flex:1, textAlign:'center', fontSize:10, fontWeight:700,
+                          color: i <= stepIdx ? G : '#BBB',
+                          padding:'4px 0',
+                          borderBottom: `3px solid ${i <= stepIdx ? GOLD : '#EEE'}`,
+                        }}>
+                          {i+1}. {label}
+                        </div>
+                      ))}
+                    </div>
+
+                    {step === 'booking' && (
+                      <>
+                        <p style={{fontSize:12, color:'#666', margin:'12px 0 8px'}}>
+                          Step 1 of 4 — confirm your move-in date and lease length. Documentation and payment come next.
+                        </p>
+                        <label style={s.label}>Move-in Date *</label>
+                        <input type="date" style={{...s.input, borderColor: formErrors.move_in_date ? '#DC2626' : '#DDD'}} value={form.move_in_date}
+                          min={new Date().toISOString().split('T')[0]}
+                          onChange={e => { setForm(f=>({...f,move_in_date:e.target.value})); setFormErrors(fe=>({...fe,move_in_date:''})); }}/>
+                        {formErrors.move_in_date && <span style={s.fieldError}>{formErrors.move_in_date}</span>}
+                        <label style={s.label}>Lease Duration *</label>
+                        <select style={{...s.input, borderColor: formErrors.lease_duration_months ? '#DC2626' : '#DDD'}} value={form.lease_duration_months}
+                          onChange={e => { setForm(f=>({...f,lease_duration_months:Number(e.target.value)})); setFormErrors(fe=>({...fe,lease_duration_months:''})); }}>
+                          <option value="">Select duration</option>
+                          {[6,12,18,24].map(m=><option key={m} value={m}>{m} months</option>)}
+                        </select>
+                        {formErrors.lease_duration_months && <span style={s.fieldError}>{formErrors.lease_duration_months}</span>}
+                        <button onClick={handleContinueToSwiftDoc} disabled={dealBlocked||!form.move_in_date||!form.lease_duration_months}
+                          style={{...s.dealBtn, opacity:(dealBlocked||!form.move_in_date||!form.lease_duration_months)?0.5:1}}>
+                          {dealBlocked ? (isRoomShareDeal ? 'All Slots Filled' : 'Room Share Only') : 'Continue to SwiftDoc →'}
+                        </button>
+                      </>
+                    )}
+
+                    {step === 'swiftdoc' && (
+                      <>
+                        <h4 style={{margin:'14px 0 6px', fontSize:14, color:G, fontWeight:800}}>📄 SwiftDoc — Tenant Details</h4>
+                        <p style={{fontSize:12, color:'#666', margin:'0 0 12px'}}>
+                          These details go onto your legally binding tenancy agreement.
+                        </p>
+                        <label style={s.label}>National Identity Number (NIN) *</label>
+                        <input style={{...s.input, borderColor: docErrors.tenant_nin ? '#DC2626' : '#DDD'}}
+                          inputMode="numeric" maxLength={11}
+                          value={docForm.tenant_nin}
+                          onChange={e => { setDocForm(f=>({...f, tenant_nin: e.target.value.replace(/\D/g,'')})); setDocErrors(de=>({...de, tenant_nin:''})); }}
+                          placeholder="11-digit NIN"/>
+                        {docErrors.tenant_nin && <span style={s.fieldError}>{docErrors.tenant_nin}</span>}
+
+                        <label style={s.label}>Occupation *</label>
+                        <input style={{...s.input, borderColor: docErrors.occupation ? '#DC2626' : '#DDD'}}
+                          value={docForm.occupation}
+                          onChange={e => { setDocForm(f=>({...f, occupation: e.target.value})); setDocErrors(de=>({...de, occupation:''})); }}
+                          placeholder="e.g. Software Engineer, Student, Trader"/>
+                        {docErrors.occupation && <span style={s.fieldError}>{docErrors.occupation}</span>}
+
+                        <label style={s.label}>Employer / Business Name</label>
+                        <input style={s.input} value={docForm.employer}
+                          onChange={e => setDocForm(f=>({...f, employer: e.target.value}))}
+                          placeholder="Optional"/>
+
+                        <label style={s.label}>Next of Kin — Full Name *</label>
+                        <input style={{...s.input, borderColor: docErrors.next_of_kin_name ? '#DC2626' : '#DDD'}}
+                          value={docForm.next_of_kin_name}
+                          onChange={e => { setDocForm(f=>({...f, next_of_kin_name: e.target.value})); setDocErrors(de=>({...de, next_of_kin_name:''})); }}/>
+                        {docErrors.next_of_kin_name && <span style={s.fieldError}>{docErrors.next_of_kin_name}</span>}
+
+                        <label style={s.label}>Next of Kin — Phone *</label>
+                        <input style={{...s.input, borderColor: docErrors.next_of_kin_phone ? '#DC2626' : '#DDD'}}
+                          inputMode="tel" value={docForm.next_of_kin_phone}
+                          onChange={e => { setDocForm(f=>({...f, next_of_kin_phone: e.target.value})); setDocErrors(de=>({...de, next_of_kin_phone:''})); }}
+                          placeholder="+234..."/>
+                        {docErrors.next_of_kin_phone && <span style={s.fieldError}>{docErrors.next_of_kin_phone}</span>}
+
+                        <div style={{display:'flex', gap:8, marginTop:14}}>
+                          <button onClick={() => setStep('booking')} style={s.backBtn}>← Back</button>
+                          <button onClick={handleContinueToSwiftCounsel} style={{...s.dealBtn, marginTop:0, flex:2}}>
+                            Continue to SwiftCounsel →
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {step === 'swiftcounsel' && (
+                      <>
+                        <h4 style={{margin:'14px 0 6px', fontSize:14, color:G, fontWeight:800}}>⚖️ SwiftCounsel — Legal Review</h4>
+                        <p style={{fontSize:12, color:'#666', margin:'0 0 12px'}}>
+                          Please review and acknowledge the key terms below before proceeding to payment.
+                        </p>
+                        <div style={s.legalBox}>
+                          <p style={s.legalP}>
+                            <strong>Lease:</strong> {form.lease_duration_months}-month tenancy starting {form.move_in_date || '—'}, at ₦{rent.toLocaleString()}/{listing.rent_period==='monthly'?'month':'year'}.
+                          </p>
+                          <p style={s.legalP}>
+                            <strong>Escrow:</strong> Your full payment is held by SouthSwift SwiftShield until you confirm move-in. Funds are only released to the landlord after you confirm satisfactory move-in within the agreed window.
+                          </p>
+                          <p style={s.legalP}>
+                            <strong>Refund:</strong> If the landlord fails to deliver the property in the condition advertised, you can raise a dispute and request a refund within 14 days.
+                          </p>
+                          <p style={s.legalP}>
+                            <strong>Platform fee:</strong> 5% total (2.5% tenant + 2.5% landlord). Non-refundable once escrow is held.
+                          </p>
+                        </div>
+
+                        <label style={s.legalCheck}>
+                          <input type="checkbox" checked={legalAgreed.terms}
+                            onChange={e => setLegalAgreed(a => ({...a, terms: e.target.checked}))}/>
+                          <span>I have read and agree to the SouthSwift <a href="/legal/terms" target="_blank" rel="noreferrer" style={{color:G}}>Terms of Service</a>.</span>
+                        </label>
+                        <label style={s.legalCheck}>
+                          <input type="checkbox" checked={legalAgreed.escrow}
+                            onChange={e => setLegalAgreed(a => ({...a, escrow: e.target.checked}))}/>
+                          <span>I understand that my payment is held in escrow and only released after I confirm move-in.</span>
+                        </label>
+                        <label style={s.legalCheck}>
+                          <input type="checkbox" checked={legalAgreed.accurate}
+                            onChange={e => setLegalAgreed(a => ({...a, accurate: e.target.checked}))}/>
+                          <span>The information I provided in SwiftDoc is accurate and may be used to generate a legally binding tenancy agreement.</span>
+                        </label>
+
+                        <div style={{display:'flex', gap:8, marginTop:14}}>
+                          <button onClick={() => setStep('swiftdoc')} style={s.backBtn}>← Back</button>
+                          <button onClick={handleContinueToPayment} style={{...s.dealBtn, marginTop:0, flex:2}}>
+                            Continue to Payment →
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {step === 'payment' && (
+                      <>
+                        <h4 style={{margin:'14px 0 6px', fontSize:14, color:G, fontWeight:800}}>🛡️ SwiftShield — Secure Payment</h4>
+                        <div style={s.feeBreakdown}>
+                          <div style={s.feeRow}><span>{isRoomShareDeal ? 'Per Person' : 'Rent'}</span><span style={{fontWeight:600}}>&#8358;{rent.toLocaleString()}</span></div>
+                          <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Tenant (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{tenantFee.toLocaleString()}</span></div>
+                          <div style={s.feeRow}><span style={{color:GOLD}}>SwiftShield Fee — Landlord (2.5%)</span><span style={{color:GOLD,fontWeight:600}}>&#8358;{landlordFee.toLocaleString()}</span></div>
+                          <div style={s.feeRow}><span style={{fontSize:11,color:'#888'}}>Total Platform Fee (5%)</span><span style={{fontSize:11,color:'#888'}}>&#8358;{(tenantFee+landlordFee).toLocaleString()}</span></div>
+                          <div style={{...s.feeRow,borderTop:'1px solid #E5E7EB',paddingTop:8,marginTop:4}}><span style={{fontWeight:800}}>Your Total</span><span style={{fontWeight:800,color:G}}>&#8358;{total.toLocaleString()}</span></div>
+                          <div style={s.feeRow}><span style={{fontSize:11,color:'#666'}}>Landlord Receives (after move-in)</span><span style={{fontSize:11,color:'#666'}}>&#8358;{(rent-landlordFee).toLocaleString()}</span></div>
+                        </div>
+                        <div style={{display:'flex', gap:8}}>
+                          <button onClick={() => setStep('swiftcounsel')} disabled={dealing} style={s.backBtn}>← Back</button>
+                          <button onClick={handleDeal} disabled={dealing||dealBlocked}
+                            style={{...s.dealBtn, marginTop:0, flex:2, opacity:(dealing||dealBlocked)?0.5:1}}>
+                            {dealing ? 'Starting payment…' : `Pay ₦${total.toLocaleString()} via SwiftShield`}
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    <div style={s.trustRow}>
+                      {['Escrow Protected','Legal Doc Included','Verified Agent'].map(t=>(
+                        <span key={t} style={s.trustTag}>✓ {t}</span>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -403,4 +569,12 @@ const s = {
   trustRow:    { display:'flex', flexWrap:'wrap', gap:6, marginTop:14 },
   trustTag:    { fontSize:10, color:'#666', background:'#F3F4F6', padding:'3px 8px', borderRadius:10 },
   fieldError:  { display:'block', fontSize:11, color:'#DC2626', marginTop:4 },
+  stepRow:     { display:'flex', gap:4, marginBottom:4 },
+  backBtn:     { flex:1, background:'#F3F4F6', color:'#444', border:'none', padding:'13px',
+                 borderRadius:12, cursor:'pointer', fontWeight:700, fontSize:13 },
+  legalBox:    { background:'#F8FAF8', border:'1px solid #E5E7EB', borderRadius:10,
+                 padding:'12px 14px', marginBottom:12 },
+  legalP:      { fontSize:12, color:'#333', margin:'0 0 8px', lineHeight:1.5 },
+  legalCheck:  { display:'flex', gap:8, alignItems:'flex-start', fontSize:12.5,
+                 color:'#333', marginBottom:10, cursor:'pointer', lineHeight:1.5 },
 };

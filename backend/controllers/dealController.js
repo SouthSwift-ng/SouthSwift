@@ -441,13 +441,56 @@ const raiseDispute = async (req, res) => {
       "UPDATE deals SET status='disputed', dispute_reason=$1, updated_at=NOW() WHERE id=$2 AND status IN ('escrow_held','docs_generated','movein_pending')",
       [reason, req.params.id]
     );
-    // Alert admin
-    await sendEmail({
-      to: 'ceo@southswift.com.ng',
-      subject: '⚠️ ADMIN: Deal Dispute Raised',
-      html: `<p>Deal ${escapeHtml(req.params.id)} has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`
-    });
+
+    // Respond to the raiser immediately. Notification emails to admin, tenant, and
+    // agent/landlord are best-effort and must NOT block the response — slow SMTP
+    // would let a successful dispute look like a failed one.
     res.json({ message: 'Dispute raised. SouthSwift team will review within 24 hours.' });
+
+    (async () => {
+      try {
+        const partiesRes = await pool.query(
+          `SELECT t.full_name AS tenant_name, t.email AS tenant_email,
+                  a.full_name AS agent_name,  a.email AS agent_email,
+                  l.title     AS listing_title
+           FROM deals d
+           JOIN users t ON t.id = d.tenant_id
+           JOIN users a ON a.id = d.agent_id
+           JOIN listings l ON l.id = d.listing_id
+           WHERE d.id = $1`,
+          [req.params.id]
+        );
+        const p = partiesRes.rows[0];
+        if (!p) return;
+        const raisedByName = req.user.id === deal.tenant_id ? p.tenant_name : p.agent_name;
+        const partyBody = `
+          <h2>A dispute has been raised on your SwiftShield deal</h2>
+          <p><strong>Property:</strong> ${escapeHtml(p.listing_title)}</p>
+          <p><strong>Raised by:</strong> ${escapeHtml(raisedByName)}</p>
+          <p><strong>Reason:</strong> ${escapeHtml(reason)}</p>
+          <p>The SouthSwift team will review within 24 hours. Funds remain held in escrow until resolution.</p>
+          <p>You will be contacted via SwiftConnect if more information is needed.</p>
+        `;
+        await sendEmail({
+          to: p.tenant_email,
+          subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Deal',
+          html: partyBody,
+        });
+        await sendEmail({
+          to: p.agent_email,
+          subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Listing',
+          html: partyBody,
+        });
+        await sendEmail({
+          to: 'ceo@southswift.com.ng',
+          subject: '⚠️ ADMIN: Deal Dispute Raised',
+          html: `<p>Deal ${escapeHtml(req.params.id)} (${escapeHtml(p.listing_title)}) has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`,
+        });
+      } catch (e) {
+        console.error('Dispute notification error:', e.message);
+      }
+    })();
+    return;
   } catch (err) {
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

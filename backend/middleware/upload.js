@@ -15,13 +15,15 @@ const listingMediaStorage = new CloudinaryStorage({
       return {
         folder: 'southswift/listings-videos',
         resource_type: 'video',
-        allowed_formats: ['mp4', 'mov', 'webm'],
+        // Cloudinary auto-transcodes most phone formats — accept the common ones it ingests.
+        allowed_formats: ['mp4', 'mov', 'webm', 'm4v', '3gp', '3g2', 'mkv', 'avi'],
       };
     }
     return {
       folder: 'southswift/listings',
       resource_type: 'image',
-      allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+      // HEIC from iPhone + AVIF from modern Android both need to land here too.
+      allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'],
     };
   },
 });
@@ -42,11 +44,13 @@ const uploadListingMedia = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'videos') {
-      if (/^video\/(mp4|quicktime|webm)$/.test(file.mimetype)) return cb(null, true);
-      return cb(new Error('Only video files (mp4, mov, webm) are allowed.'), false);
+      // Phone formats vary: iOS sends video/quicktime, Android often sends video/3gpp,
+      // some browsers tag MKV as video/x-matroska. Accept the realistic set.
+      if (/^video\/(mp4|quicktime|webm|3gpp2?|x-m4v|x-matroska|x-msvideo|avi)$/.test(file.mimetype)) return cb(null, true);
+      return cb(new Error('Only video files (mp4, mov, webm, 3gp, mkv, m4v, avi) are allowed.'), false);
     }
-    if (/^image\/(jpeg|jpg|png|webp)$/.test(file.mimetype)) return cb(null, true);
-    return cb(new Error('Only image files (jpg, png, webp) are allowed.'), false);
+    if (/^image\/(jpeg|jpg|png|webp|heic|heif|avif)$/.test(file.mimetype)) return cb(null, true);
+    return cb(new Error('Only image files (jpg, png, webp, heic, avif) are allowed.'), false);
   },
 }).fields([
   { name: 'images', maxCount: 6 },

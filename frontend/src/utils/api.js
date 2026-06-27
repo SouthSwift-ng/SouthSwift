@@ -119,6 +119,8 @@ export const submitVerification = (data) => {
     timeout: 60000, // 60s for doc uploads
   });
 };
+export const getBanks       = ()                              => API.get('/agents/banks');
+export const resolveAccount = (account_number, bank_code)     => API.post('/agents/resolve-account', { account_number, bank_code });
 export const uploadIntroVideo = (file) => {
   const fd = new FormData();
   fd.append('intro_video', file);
@@ -137,6 +139,7 @@ export const releaseFunds     = (dealId)         => API.put(`/admin/deals/${deal
 export const resolveDispute   = (dealId, data)   => API.put(`/admin/deals/${dealId}/resolve-dispute`, data);
 export const getAllUsers       = ()               => API.get('/admin/users');
 export const getAllListings    = ()               => API.get('/admin/listings');
+export const deleteListingsBulk = (ids)            => API.delete('/admin/listings', { data: { ids } });
 
 // ── WAITLIST ──────────────────────────────────────────────────────────────────
 export const joinWaitlist = (data) => API.post('/waitlist', data);

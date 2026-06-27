@@ -5,6 +5,8 @@ const { protect, agentOnly } = require('../middleware/auth');
 const { uploadAgentDocs, uploadIntroVideo } = require('../middleware/upload');
 
 router.get('/',                   agentController.getAgents);
+router.get('/banks',              protect, agentOnly, agentController.getBanks);
+router.post('/resolve-account',   protect, agentOnly, express.json(), agentController.resolveAccount);
 router.get('/:id',                agentController.getAgent);
 router.post('/verify-request', protect, agentOnly, (req, res, next) => {
   uploadAgentDocs(req, res, (err) => {
