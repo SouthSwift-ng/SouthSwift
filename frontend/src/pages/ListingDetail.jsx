@@ -11,6 +11,11 @@ import { Shield, MapPin, Bed, Bath, CheckCircle, Home, Star } from 'lucide-react
 const G    = '#1B4332';
 const GOLD = '#C8963C';
 
+// Inline SVG fallback. via.placeholder.com is dead and let iOS render alt text as
+// link-coloured overlay on top of the broken image — switch to a self-contained data URI.
+const PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 480'%3E%3Crect width='800' height='480' fill='%231B4332'/%3E%3Cpath d='M400 180 L470 230 L470 310 L330 310 L330 230 Z' fill='%23C8963C' opacity='0.6'/%3E%3Ctext x='400' y='370' font-family='Arial' font-size='24' font-weight='700' fill='white' text-anchor='middle' opacity='0.7'%3ESouthSwift%3C/text%3E%3C/svg%3E";
+const THUMB_PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 70'%3E%3Crect width='100' height='70' fill='%231B4332'/%3E%3C/svg%3E";
+
 // Fix Leaflet default marker icon broken by webpack
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -192,7 +197,7 @@ export default function ListingDetail() {
   if (loading) return <div style={s.loading}>Loading listing...</div>;
   if (!listing) return <div style={s.loading}>Listing not found.</div>;
 
-  const images    = listing.images?.length ? listing.images : ['https://via.placeholder.com/800x480?text=SouthSwift'];
+  const images    = listing.images?.length ? listing.images : [PLACEHOLDER];
   const amenities = Array.isArray(listing.amenities) ? listing.amenities : [];
   const slotsFilled = parseInt(roomShare?.room_share_slots_filled) || 0;
   const slotsFull = listing.is_room_share && roomShare &&
@@ -209,8 +214,8 @@ export default function ListingDetail() {
       <div style={s.container}>
         {/* GALLERY */}
         <div style={s.gallery}>
-          <img src={images[imgIdx]} alt={listing.title} style={s.mainImg}
-            onError={e => { e.target.src='https://via.placeholder.com/800x480?text=SouthSwift'; }}/>
+          <img src={images[imgIdx]} alt="" style={s.mainImg}
+            onError={e => { if (e.target.src !== PLACEHOLDER) e.target.src = PLACEHOLDER; }}/>
           {listing.is_swiftshield && (
             <div style={s.shieldBadge}><Shield size={13} color="white" strokeWidth={3}/> SwiftShield Protected</div>
           )}
@@ -219,7 +224,7 @@ export default function ListingDetail() {
               {images.map((img, i) => (
                 <img key={i} src={img} alt="" onClick={() => setImgIdx(i)}
                   style={{...s.thumb, border: i===imgIdx ? `3px solid ${G}` : '3px solid transparent'}}
-                  onError={e => { e.target.src='https://via.placeholder.com/100x70'; }}/>
+                  onError={e => { if (e.target.src !== THUMB_PLACEHOLDER) e.target.src = THUMB_PLACEHOLDER; }}/>
               ))}
             </div>
           )}

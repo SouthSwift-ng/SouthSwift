@@ -6,6 +6,11 @@ const GOLD = '#C8963C';
 
 const fmt = (n) => { const num = Number(n); return isNaN(num) ? '0' : num.toLocaleString(); };
 
+// Inline SVG fallback — never depends on a 3rd-party host. via.placeholder.com used to
+// fill this slot but went offline; broken images inside <Link> let iOS render the alt
+// text in default-link colour, which is what produced the purple title overlay.
+const PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 220'%3E%3Crect width='400' height='220' fill='%231B4332'/%3E%3Cpath d='M200 80 L240 110 L240 150 L160 150 L160 110 Z' fill='%23C8963C' opacity='0.6'/%3E%3Ctext x='200' y='185' font-family='Arial' font-size='14' font-weight='700' fill='white' text-anchor='middle' opacity='0.7'%3ESouthSwift%3C/text%3E%3C/svg%3E";
+
 export default function ListingCard({ listing, distanceKm }) {
   const {
     id, title, city, state, rent_price, rent_period,
@@ -14,13 +19,16 @@ export default function ListingCard({ listing, distanceKm }) {
     agent_name, verification_status
   } = listing;
 
-  const img = images?.[0] || 'https://via.placeholder.com/400x220?text=SouthSwift+Property';
+  const img = images?.[0] || PLACEHOLDER;
 
   return (
     <Link to={`/listings/${id}`} style={s.card}>
       {/* Image */}
       <div style={s.imgWrap}>
-        <img src={img} alt={title} style={s.img} onError={e => { e.target.src='https://via.placeholder.com/400x220?text=SouthSwift'; }} />
+        {/* alt="" intentionally — a non-empty alt would render as link-coloured text
+            on top of the broken-image icon when the URL fails. */}
+        <img src={img} alt="" style={s.img}
+          onError={e => { if (e.target.src !== PLACEHOLDER) e.target.src = PLACEHOLDER; }} />
         {is_swiftshield && (
           <div style={s.shield}>
             <Shield size={12} color="white" strokeWidth={3} />
