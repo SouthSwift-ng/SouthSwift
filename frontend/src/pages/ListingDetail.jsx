@@ -115,6 +115,19 @@ export default function ListingDetail() {
   const [legalAgreed, setLegalAgreed] = useState({ terms: false, escrow: false, accurate: false });
 
   useEffect(() => {
+    // Reset every piece of wizard state when the listing changes — otherwise a tenant
+    // who tabs between listings can carry a half-filled NIN and ticked legal checkboxes
+    // from listing A onto listing B's payment flow.
+    setStep('booking');
+    setForm({ lease_duration_months: '', move_in_date: '' });
+    setFormErrors({});
+    setDocForm({ tenant_nin: '', occupation: '', employer: '', next_of_kin_name: '', next_of_kin_phone: '' });
+    setDocErrors({});
+    setLegalAgreed({ terms: false, escrow: false, accurate: false });
+    setLoad(true);
+    setRoomShare(null);
+    setDealMode('standard');
+
     getListing(id)
       .then(r => {
         setL(r.data);
@@ -174,6 +187,16 @@ export default function ListingDetail() {
         lease_duration_months: form.lease_duration_months,
         move_in_date:          form.move_in_date,
         is_room_share:         !!listing.is_room_share && dealMode === 'room_share',
+        // Persist what the wizard collected in step 2 so SwiftDoc generation can
+        // produce a tenancy agreement with the tenant's real NIN, occupation, and
+        // next of kin instead of fabricating them.
+        swiftdoc_data: {
+          tenant_nin:        docForm.tenant_nin,
+          occupation:        docForm.occupation,
+          employer:          docForm.employer || '',
+          next_of_kin_name:  docForm.next_of_kin_name,
+          next_of_kin_phone: docForm.next_of_kin_phone,
+        },
       });
       toast.success('Deal initiated! Redirecting to payment...');
       const paymentUrl = res.data.payment_url;

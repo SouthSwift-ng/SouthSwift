@@ -455,13 +455,23 @@ const adminController = {
       if (!Number.isFinite(transferAmount) || transferAmount <= 0)
         return res.status(400).json({ error: `Invalid payout amount for this deal (₦${transferAmount / 100}). Check its rent and fee values.` });
 
-      // Atomically claim the release to prevent concurrent double-release.
+      // Atomically claim the release. Three guards in the WHERE:
+      //   funds_released_at IS NULL      — no double-release
+      //   refunded_at IS NULL            — refunded deals must not also be paid out
+      //   status IN (...safe statuses)   — disputed/cancelled deals must not pay out
+      // Without these checks a race between Refund → Release (or Dispute → Release)
+      // could send money on a deal that's already cancelled, refunded, or disputed.
       const lockResult = await pool.query(
-        "UPDATE deals SET funds_released_at=NOW(), updated_at=NOW() WHERE id=$1 AND funds_released_at IS NULL RETURNING id",
+        `UPDATE deals SET funds_released_at=NOW(), updated_at=NOW()
+         WHERE id=$1
+           AND funds_released_at IS NULL
+           AND refunded_at IS NULL
+           AND status IN ('escrow_held','docs_generated','movein_pending','completed')
+         RETURNING id`,
         [req.params.id]
       );
       if (!lockResult.rows.length)
-        return res.status(400).json({ error: 'Funds already released for this deal.' });
+        return res.status(400).json({ error: 'Funds cannot be released: already released, refunded, or deal not in a releasable state.' });
 
       // From here, ANY failure must release the lock so the payout can be retried — otherwise the
       // deal would look "released" while no money was sent. The deterministic transfer reference
@@ -503,12 +513,46 @@ const adminController = {
 
         res.json({ message: 'Funds disbursed via Paystack Transfer.', transfer_code: transferCode });
       } catch (transferErr) {
-        // Roll back the release lock — no money was sent, so the admin can safely retry.
+        // Network errors are the dangerous case: Paystack might have processed the transfer
+        // before our connection dropped. Before nulling the lock, ask Paystack whether the
+        // deterministic reference already exists — if so, claim success and DON'T allow retry.
+        const transferReference = `SS-RELEASE-${deal.id}`;
+        let alreadySettled = false;
+        try {
+          const verify = await axios.get(
+            `https://api.paystack.co/transfer/verify/${encodeURIComponent(transferReference)}`,
+            { headers: paystackHeaders, timeout: 10000 }
+          );
+          const settledStatus = verify.data?.data?.status;
+          // Paystack states: 'pending' | 'success' | 'failed' | 'reversed'
+          // Anything except 'failed'/'reversed' means the transfer is live on their side.
+          if (settledStatus && !['failed','reversed'].includes(settledStatus)) {
+            alreadySettled = true;
+            await pool.query(
+              "UPDATE deals SET status='completed', notes=$1 WHERE id=$2",
+              [`Paystack transfer (recovered ${settledStatus}): ${transferReference}`, req.params.id]
+            ).catch(() => {});
+          }
+        } catch (verifyErr) {
+          // 404 from /transfer/verify means Paystack never received the transfer — safe to retry.
+          // Anything else, be conservative and treat as live to avoid double-pay.
+          const status = verifyErr.response?.status;
+          if (status && status !== 404) alreadySettled = true;
+        }
+
+        if (alreadySettled) {
+          console.warn('Transfer error but Paystack reports it landed — keeping lock:', transferErr.response?.data || transferErr.message);
+          return res.status(502).json({
+            error: 'Transfer status uncertain — Paystack reports the payment may have landed. Check the agent\'s bank before retrying.',
+          });
+        }
+
+        // Confirmed safe to retry — no money on Paystack's side.
         await pool.query(
           "UPDATE deals SET funds_released_at=NULL, updated_at=NOW() WHERE id=$1",
           [req.params.id]
         ).catch(() => {});
-        console.error('Fund transfer failed (lock released for retry):', transferErr.response?.data || transferErr.message);
+        console.error('Fund transfer failed (verified no-send, lock released for retry):', transferErr.response?.data || transferErr.message);
         return res.status(502).json({ error: 'Paystack transfer failed. No funds were sent — you can retry.' });
       }
     } catch (err) {

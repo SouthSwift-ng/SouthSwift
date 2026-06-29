@@ -232,6 +232,15 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS refunded_at    TIMESTAMP;
     `);
 
+    // Tenant info collected by the SwiftDoc wizard before payment (NIN, occupation,
+    // employer, next of kin). Persisted so SwiftDoc generation can put real data on
+    // the legally binding tenancy agreement instead of fabricating it.
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS swiftdoc_data JSONB,
+        ADD COLUMN IF NOT EXISTS payment_anomaly TEXT;
+    `);
+
     // Allow 'archived' status on existing databases (CHECK constraint predates it)
     await client.query(`
       ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;

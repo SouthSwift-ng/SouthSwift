@@ -62,12 +62,44 @@ async function runSwiftDocBackground({ deal, listing, tenant, agent }) {
   }
 }
 
+// Validate + normalize the SwiftDoc wizard payload. Step-3 legal copy promises this
+// data goes onto the tenancy agreement, so reject obviously-bad input here.
+const sanitizeSwiftDocData = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const str = (v, max = 200) => typeof v === 'string' ? v.trim().slice(0, max) : '';
+  const nin = str(raw.tenant_nin, 20).replace(/\D/g, '');
+  if (nin.length !== 11) return { _error: 'NIN must be 11 digits.' };
+  const occupation       = str(raw.occupation);
+  const next_of_kin_name = str(raw.next_of_kin_name);
+  const next_of_kin_phone = str(raw.next_of_kin_phone, 20);
+  if (!occupation)         return { _error: 'Occupation is required.' };
+  if (!next_of_kin_name)   return { _error: 'Next of kin name is required.' };
+  if (!/^\+?\d[\d\s-]{9,18}$/.test(next_of_kin_phone))
+    return { _error: 'Next of kin phone is invalid.' };
+  return {
+    tenant_nin: nin,
+    occupation,
+    employer: str(raw.employer),
+    next_of_kin_name,
+    next_of_kin_phone,
+  };
+};
+
 // POST /api/deals/initiate — tenant initiates a deal
 const initiateDeal = async (req, res) => {
   const { listing_id, move_in_date, lease_duration_months } = req.body;
   if (!listing_id) return res.status(400).json({ error: 'Listing ID required.' });
   if (!move_in_date) return res.status(400).json({ error: 'Move-in date is required.' });
   if (!lease_duration_months) return res.status(400).json({ error: 'Lease duration is required.' });
+
+  // SwiftDoc data is optional on the API (back-compat — agents/admin tooling can still
+  // initiate without it) but the wizard always sends it. Validate when present.
+  let swiftdoc_data = null;
+  if (req.body.swiftdoc_data !== undefined) {
+    const sanitized = sanitizeSwiftDocData(req.body.swiftdoc_data);
+    if (sanitized?._error) return res.status(400).json({ error: sanitized._error });
+    swiftdoc_data = sanitized;
+  }
 
   const client = await pool.connect();
   let committed = false;
@@ -149,14 +181,19 @@ const initiateDeal = async (req, res) => {
             totalPaid: total_paid } = computeDealAmounts(rent_amount);
 
     let deal;
+    // Only overwrite swiftdoc_data on retry when the wizard actually re-sent it — the
+    // tenant might be resuming an old "pay now" link from email, in which case keep
+    // whatever was captured the first time.
+    const swiftdoc_data_json = swiftdoc_data ? JSON.stringify(swiftdoc_data) : null;
     if (reusable) {
       // Refresh the existing deal — repairs old ₦0 / stale-total rows on retry too
       const updated = await client.query(
         `UPDATE deals SET rent_amount=$1, service_fee_tenant=$2, service_fee_landlord=$3,
-           total_paid=$4, move_in_date=$5, lease_duration_months=$6, status='initiated', updated_at=NOW()
-         WHERE id=$7 RETURNING *`,
+           total_paid=$4, move_in_date=$5, lease_duration_months=$6, status='initiated',
+           swiftdoc_data=COALESCE($7::jsonb, swiftdoc_data), updated_at=NOW()
+         WHERE id=$8 RETURNING *`,
         [rent_amount, service_fee_tenant, service_fee_landlord, total_paid,
-         move_in_date, lease_duration_months, reusable.id]
+         move_in_date, lease_duration_months, swiftdoc_data_json, reusable.id]
       );
       deal = updated.rows[0];
       room_share_slot_number = deal.room_share_slot_number;
@@ -167,12 +204,12 @@ const initiateDeal = async (req, res) => {
         `INSERT INTO deals
          (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
           service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
-          is_room_share_deal, room_share_slot_number)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11) RETURNING *`,
+          is_room_share_deal, room_share_slot_number, swiftdoc_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11,$12::jsonb) RETURNING *`,
         [listing_id, req.user.id, listing.agent_id, rent_amount,
          service_fee_tenant, service_fee_landlord, total_paid,
          move_in_date, lease_duration_months,
-         is_room_share_deal, room_share_slot_number]
+         is_room_share_deal, room_share_slot_number, swiftdoc_data_json]
       );
       deal = dealResult.rows[0];
 
@@ -284,8 +321,11 @@ const verifyPayment = async (req, res) => {
     if (req.user && pendingDeal.tenant_id !== req.user.id)
       return res.status(403).json({ error: 'Not authorised to verify this payment.' });
 
-    const expectedKobo = pendingDeal.total_paid * 100;
-    if (amount !== expectedKobo || (currency && currency !== 'NGN'))
+    // pg returns BIGINT as a string — coerce explicitly to dodge `'18' * 100 === 1800` type traps.
+    const expectedKobo = Number(pendingDeal.total_paid) * 100;
+    const receivedKobo = Number(amount);
+    if (!Number.isFinite(expectedKobo) || !Number.isFinite(receivedKobo) ||
+        receivedKobo !== expectedKobo || (currency && currency !== 'NGN'))
       return res.status(400).json({ error: 'Payment amount mismatch. Contact support.' });
 
     // Update deal to escrow_held — the status guard keeps this idempotent.
@@ -513,6 +553,12 @@ const getMyDeals = async (req, res) => {
   }
 };
 
+// Counterpart phone/email is the kind of info a bad actor would create a fake deal
+// just to harvest. Only expose it once money has actually landed in escrow.
+const PII_VISIBLE_STATUSES = new Set([
+  'escrow_held', 'docs_generated', 'movein_pending', 'completed', 'disputed'
+]);
+
 // GET /api/deals/:id
 const getDeal = async (req, res) => {
   try {
@@ -532,6 +578,16 @@ const getDeal = async (req, res) => {
     const deal = result.rows[0];
     if (![deal.tenant_id, deal.agent_id].includes(req.user.id) && req.user.role !== 'admin')
       return res.status(403).json({ error: 'Not authorised to view this deal.' });
+
+    // Pre-payment, strip the other party's contact details. Admins always see everything.
+    if (req.user.role !== 'admin' && !PII_VISIBLE_STATUSES.has(deal.status)) {
+      if (deal.tenant_id === req.user.id) {
+        deal.agent_phone = null;
+      } else {
+        deal.tenant_phone = null;
+        deal.tenant_email = null;
+      }
+    }
     res.json(deal);
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
