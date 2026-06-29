@@ -71,7 +71,9 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'"],
+      // Backend serves JSON only — the inline-script allowance was a leftover that
+      // weakened CSP everywhere. Drop it.
+      scriptSrc:  ["'self'"],
       styleSrc:   ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
       imgSrc:     ["'self'", "data:", "https:", "blob:"],
       connectSrc: ["'self'", "https://api.paystack.co", "https://nominatim.openstreetmap.org", "https://*.tile.openstreetmap.org"],
@@ -89,6 +91,10 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, l
 app.use('/api/auth',     rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: { error: 'Too many attempts. Please try again later.' } }));
 app.use('/api/waitlist',  rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { error: 'Too many requests. Please try again later.' } }));
 app.use('/api/payments', rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: { error: 'Too many payment requests.' } }));
+// Tighter bucket on bank-resolve specifically — a compromised agent could otherwise
+// use it as a paid name-lookup service or burn Paystack quota.
+app.use('/api/agents/resolve-account', rateLimit({ windowMs: 60 * 1000, max: 20, message: { error: 'Too many account lookups. Please wait a moment.' } }));
+app.use('/api/agents/banks',           rateLimit({ windowMs: 60 * 1000, max: 30, message: { error: 'Too many requests.' } }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
@@ -99,20 +105,27 @@ const allowedOrigins = [
   ...(process.env.EXTRA_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
 ].filter(Boolean);
 
-// Vercel preview deployments of THIS project. Set VERCEL_TEAM_SLUG in the environment to pin
-// previews to your team (recommended) — i.e. southswift-<hash>-<team>.vercel.app — so another
-// Vercel account can't spin up a "southswift-*" project that satisfies CORS. Auth here is
-// Bearer-token (not cookies), which already limits the practical risk of a loose match.
+// Vercel preview deployments of THIS project. VERCEL_TEAM_SLUG pins previews to your
+// team — i.e. southswift-<hash>-<team>.vercel.app — so another Vercel account can't
+// spin up a "southswift-*" project that satisfies CORS. The loose fallback used to
+// be permissive enough that ANY user-created southswift-*.vercel.app project would
+// pass; in production we now refuse to fall back. Auth is Bearer-token (not cookies)
+// so the practical impact is limited to recon, but tightening is cheap.
 const teamSlug = (process.env.VERCEL_TEAM_SLUG || '').replace(/[^a-z0-9-]/gi, '');
 const previewRegex = teamSlug
   ? new RegExp(`^https:\\/\\/southswift-[a-z0-9-]+-${teamSlug}\\.vercel\\.app$`)
-  : /^https:\/\/southswift-[a-z0-9]+(?:-[a-z0-9-]+)?\.vercel\.app$/;
+  : (process.env.NODE_ENV === 'production'
+      ? null  // production with no team slug → disable preview match entirely (paste full URLs into EXTRA_CORS_ORIGINS if needed)
+      : /^https:\/\/southswift-[a-z0-9]+(?:-[a-z0-9-]+)?\.vercel\.app$/);
+if (process.env.NODE_ENV === 'production' && !teamSlug) {
+  console.warn('⚠️  VERCEL_TEAM_SLUG not set — Vercel preview origins will be rejected by CORS. Set the env var to allow preview deploys.');
+}
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    if (previewRegex.test(origin)) return callback(null, true);
+    if (previewRegex && previewRegex.test(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,

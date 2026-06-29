@@ -136,6 +136,7 @@ const agentController = {
       // not later when admin clicks "Release Funds". Failure is non-fatal —
       // verification still proceeds and admin can retry on release.
       if (req.body.account_number && req.body.bank_code && process.env.PAYSTACK_SECRET_KEY) {
+        let recipientCode = null;
         try {
           const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
             type:           'nuban',
@@ -150,17 +151,23 @@ const agentController = {
             },
             timeout: 10000,
           });
-          const recipientCode = recipRes.data?.data?.recipient_code;
-          if (recipientCode) {
-            await pool.query(
-              'UPDATE agent_profiles SET paystack_recipient_code=$1 WHERE user_id=$2',
-              [recipientCode, req.user.id]
-            );
-          }
+          recipientCode = recipRes.data?.data?.recipient_code;
         } catch (paystackErr) {
           // Bad bank code or unreachable Paystack — log it; admin release path will retry.
           console.warn('Paystack recipient pre-create failed:',
             paystackErr.response?.data?.message || paystackErr.message);
+        }
+        if (recipientCode) {
+          // If the DB write fails after Paystack succeeded the recipient is orphaned on
+          // Paystack — log the code so it can be reconciled rather than vanishing.
+          try {
+            await pool.query(
+              'UPDATE agent_profiles SET paystack_recipient_code=$1 WHERE user_id=$2',
+              [recipientCode, req.user.id]
+            );
+          } catch (dbErr) {
+            console.error(`⚠️  ORPHAN Paystack recipient: code=${recipientCode} agent=${req.user.id} reason=${dbErr.message}`);
+          }
         }
       }
 
@@ -352,7 +359,11 @@ const adminController = {
         pool.query('SELECT COUNT(*) FROM listings'),
         pool.query("SELECT COUNT(*) FROM deals WHERE status='completed'"),
         pool.query("SELECT COUNT(*) FROM agent_profiles WHERE verification_status='verified'"),
-        pool.query("SELECT COALESCE(SUM(service_fee_tenant + service_fee_landlord),0) AS total FROM deals WHERE status='completed'"),
+        // Only count fees from deals whose funds were actually disbursed AND not later
+        // refunded — otherwise a refunded deal inflates revenue forever.
+        pool.query(`SELECT COALESCE(SUM(service_fee_tenant + service_fee_landlord),0) AS total
+                    FROM deals
+                    WHERE funds_released_at IS NOT NULL AND refunded_at IS NULL`),
       ]);
       res.json({
         total_users:       parseInt(users.rows[0].count),

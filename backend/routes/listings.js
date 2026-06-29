@@ -7,7 +7,8 @@ const { uploadListingMedia } = require('../middleware/upload');
 router.get('/',              getListings);
 router.get('/agent/my',      protect, agentOnly, getMyListings);
 router.get('/:id',                    getListing);
-router.get('/:id/room-share-status',  getRoomShareStatus);
+// Slot occupancy is non-public — leaks rental signal to scrapers otherwise.
+router.get('/:id/room-share-status',  protect, getRoomShareStatus);
 router.post('/', protect, agentOnly, (req, res, next) => {
   uploadListingMedia(req, res, (err) => {
     if (!err) return next();
