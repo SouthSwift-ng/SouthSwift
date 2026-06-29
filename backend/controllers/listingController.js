@@ -196,6 +196,53 @@ const updateListing = async (req, res) => {
       !(Number(req.body.room_share_price_per_person) > 0))
     return res.status(400).json({ error: 'Price per person must be greater than zero.' });
 
+  // Hard bounds — without these an agent could set rent to 0 / negative / a string,
+  // or shrink room_share_slots below the number already paid-up.
+  if (req.body.rent_price !== undefined && !(Number(req.body.rent_price) > 0))
+    return res.status(400).json({ error: 'Rent price must be greater than zero.' });
+  if (req.body.bedrooms !== undefined && !(Number(req.body.bedrooms) >= 0))
+    return res.status(400).json({ error: 'Bedrooms must be a non-negative number.' });
+  if (req.body.bathrooms !== undefined && !(Number(req.body.bathrooms) >= 0))
+    return res.status(400).json({ error: 'Bathrooms must be a non-negative number.' });
+
+  // Pre-flight check on the listing — ownership AND state-machine guards both need
+  // its current values before we can decide what's allowed.
+  try {
+    const current = await pool.query(
+      'SELECT agent_id, room_share_slots_filled, is_available FROM listings WHERE id=$1',
+      [req.params.id]
+    );
+    if (!current.rows.length) return res.status(404).json({ error: 'Listing not found.' });
+    if (current.rows[0].agent_id !== req.user.id)
+      return res.status(404).json({ error: 'Listing not found.' }); // 404 not 403 — don't confirm existence
+
+    // Refuse shrinking slot count below what's already paid for, otherwise refunds
+    // would be required and the room-share UI breaks.
+    if (req.body.room_share_slots !== undefined) {
+      const slots = Number(req.body.room_share_slots);
+      if (!(slots >= 1)) return res.status(400).json({ error: 'Room share slots must be at least 1.' });
+      if (slots < Number(current.rows[0].room_share_slots_filled || 0))
+        return res.status(400).json({ error: `Cannot reduce slots below the ${current.rows[0].room_share_slots_filled} already filled.` });
+    }
+
+    // Re-opening a listing that has an in-flight deal would let a second tenant
+    // book a property already in escrow → double-booking.
+    if (req.body.is_available === true) {
+      const activeDeals = await pool.query(
+        `SELECT 1 FROM deals
+         WHERE listing_id=$1
+           AND status NOT IN ('cancelled','archived','completed')
+         LIMIT 1`,
+        [req.params.id]
+      );
+      if (activeDeals.rows.length)
+        return res.status(400).json({ error: 'Cannot re-open: this listing has an active deal in flight.' });
+    }
+  } catch (err) {
+    console.error('updateListing precheck error:', err.message);
+    return res.status(500).json({ error: 'Could not validate listing.' });
+  }
+
   const fields = ['title','description','rent_price','bedrooms','bathrooms','address','city','state','is_available','amenities',
                   'is_room_share','room_share_price_per_person','room_share_slots'];
   const updates = []; const params = [];
@@ -206,10 +253,11 @@ const updateListing = async (req, res) => {
   if (!updates.length) return res.status(400).json({ error: 'No fields to update.' });
   params.push(req.params.id, req.user.id);
   try {
-    await pool.query(
+    const result = await pool.query(
       `UPDATE listings SET ${updates.join(',')}, updated_at=NOW() WHERE id=$${idx} AND agent_id=$${idx+1}`,
       params
     );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Listing not found.' });
     res.json({ message: 'Listing updated.' });
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
@@ -219,10 +267,38 @@ const updateListing = async (req, res) => {
 // DELETE /api/listings/:id
 const deleteListing = async (req, res) => {
   try {
-    await pool.query('DELETE FROM listings WHERE id=$1 AND agent_id=$2', [req.params.id, req.user.id]);
+    // Guard before the DELETE — listing FK on deals is RESTRICT, so otherwise an
+    // agent gets a generic 500 with no path forward when a deal ever existed.
+    const blocking = await pool.query(
+      `SELECT 1 FROM deals
+       WHERE listing_id=$1
+         AND status NOT IN ('cancelled','archived','initiated','payment_pending')
+       LIMIT 1`,
+      [req.params.id]
+    );
+    if (blocking.rows.length)
+      return res.status(400).json({
+        error: 'This listing has paid or completed deals and cannot be deleted. Mark it Occupied / unavailable instead.'
+      });
+
+    // We still leave initiated/payment_pending deals alone — those have FK refs we must
+    // archive first or DELETE will RESTRICT. Cancel them before delete:
+    await pool.query(
+      "UPDATE deals SET status='archived', updated_at=NOW() WHERE listing_id=$1 AND status IN ('initiated','payment_pending')",
+      [req.params.id]
+    );
+
+    const result = await pool.query(
+      'DELETE FROM listings WHERE id=$1 AND agent_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Listing not found.' });
     res.json({ message: 'Listing deleted.' });
   } catch (err) {
-    console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
+    console.error('deleteListing error:', err.code || '', err.message);
+    if (err.code === '23503')
+      return res.status(400).json({ error: 'This listing is referenced by deals or messages and cannot be removed.' });
+    res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
