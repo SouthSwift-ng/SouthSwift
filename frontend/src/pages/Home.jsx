@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { getListings } from '../utils/api';
+import { formatNaira } from '../utils/format';
 import ListingCard from '../components/ListingCard';
 import { Search, Shield, Map, List } from 'lucide-react';
 
@@ -66,7 +67,7 @@ function ListingsMap({ listings }) {
                   <img src={l.images[0]} alt="" style={mm.infoImg}
                     onError={e => { e.target.style.display = 'none'; }} />
                 )}
-                <div style={mm.infoPrice}>₦{Number(l.rent_price).toLocaleString()}</div>
+                <div style={mm.infoPrice}>₦{formatNaira(l.rent_price)}</div>
                 <div style={mm.infoTitle}>{l.title}</div>
                 <div style={mm.infoSub}>{l.city} · {l.bedrooms} bed</div>
                 <div style={mm.infoLink}>View listing →</div>

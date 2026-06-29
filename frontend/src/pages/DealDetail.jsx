@@ -9,6 +9,7 @@ import {
   getAgent, submitReview, getAgentReviews, getWaitlist,
   getAllListings, deleteListingsBulk
 } from '../utils/api';
+import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare } from 'lucide-react';
 
@@ -44,6 +45,9 @@ export function DealDetail() {
   // Returning from Paystack — the callback appends ?reference=...&trxref=...
   // Verify the payment, then refresh the deal so the progress + badge update.
   // The webhook is the server-side backup; "already verified" is not an error.
+  // Effect must depend on id + the reference so navigating to a DIFFERENT deal's
+  // callback URL re-runs the verification — previously empty deps meant only the
+  // first mount verified, and a second deal's ?reference=... was ignored.
   useEffect(() => {
     const reference = searchParams.get('reference') || searchParams.get('trxref');
     if (!reference) return;
@@ -63,7 +67,7 @@ export function DealDetail() {
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [id, searchParams, setSearchParams]);
 
   const handleConfirm = async () => {
     try {
@@ -170,12 +174,12 @@ export function DealDetail() {
           <div style={ps.left}>
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
-              {[['Rent Amount',`₦${Number(deal.rent_amount).toLocaleString()}`],
-                ['SwiftShield Fee — Tenant (2.5%)',`₦${Number(deal.service_fee_tenant).toLocaleString()}`],
-                ['SwiftShield Fee — Landlord (2.5%)',`₦${Number(deal.service_fee_landlord).toLocaleString()}`],
-                ['Total Platform Fee (5%)',`₦${(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord)).toLocaleString()}`],
-                ['Tenant Total',`₦${Number(deal.total_paid).toLocaleString()}`],
-                ['Landlord Disbursement',`₦${(Number(deal.rent_amount)-Number(deal.service_fee_landlord)).toLocaleString()}`],
+              {[['Rent Amount',`₦${formatNaira(deal.rent_amount)}`],
+                ['SwiftShield Fee — Tenant (2.5%)',`₦${formatNaira(deal.service_fee_tenant)}`],
+                ['SwiftShield Fee — Landlord (2.5%)',`₦${formatNaira(deal.service_fee_landlord)}`],
+                ['Total Platform Fee (5%)',`₦${formatNaira(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord))}`],
+                ['Tenant Total',`₦${formatNaira(deal.total_paid)}`],
+                ['Landlord Disbursement',`₦${formatNaira(Number(deal.rent_amount)-Number(deal.service_fee_landlord))}`],
                 ['Lease Duration',`${deal.lease_duration_months} months`],
                 ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
                 ['Deal ID', deal.id.slice(0,8)+'...'],
@@ -233,7 +237,7 @@ export function DealDetail() {
                 <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
                 <p style={ps.actionDesc}>Pay securely via Paystack. Your rent stays in SwiftShield escrow and is only released when you confirm move-in.</p>
                 <button onClick={handlePayNow} disabled={paying} style={{...ps.confirmBtn, opacity: paying ? 0.7 : 1}}>
-                  {paying ? 'Starting payment…' : `Pay Now — ₦${Number(deal.total_paid).toLocaleString()}`}
+                  {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.total_paid)}`}
                 </button>
               </div>
             )}
@@ -653,7 +657,17 @@ export function AdminPanel() {
   const [deletingListings, setDeletingListings] = useState(false);
 
   const refreshAllListings = () =>
-    getAllListings().then(r => setAllListings(r.data)).catch(()=>{});
+    getAllListings().then(r => {
+      setAllListings(r.data);
+      // Drop selections that no longer exist on the server — otherwise the "Delete
+      // Selected (N)" counter overcounts and bulk-delete silently no-ops those ids.
+      setSelectedListings(prev => {
+        const stillExists = new Set(r.data.map(l => l.id));
+        const next = new Set();
+        prev.forEach(id => stillExists.has(id) && next.add(id));
+        return next;
+      });
+    }).catch(()=>{});
 
   useEffect(() => {
     getDashboard().then(r=>setStats(r.data)).catch(()=>{});
@@ -715,7 +729,7 @@ export function AdminPanel() {
           <div style={ps.statsGrid}>
             {[['👥',stats.total_users,'Total Users'],['🏠',stats.total_listings,'Listings'],
               ['✅',stats.completed_deals,'Completed Deals'],['🛡️',stats.verified_agents,'Verified Agents'],
-              ['₦',`${Number(stats.total_revenue_ngn||0).toLocaleString()}`,'Total Revenue']].map(([icon,num,label])=>(
+              ['₦',formatNaira(stats.total_revenue_ngn || 0),'Total Revenue']].map(([icon,num,label])=>(
               <div key={label} style={ps.aStat}>
                 <div style={ps.aStatIcon}>{icon}</div>
                 <div style={ps.aStatNum}>{num}</div>
@@ -776,7 +790,7 @@ export function AdminPanel() {
                   <div style={{...ps.agentDetail, fontSize:10, color:'#AAA'}}>{l.id}</div>
                 </div>
                 <div style={{textAlign:'right', flexShrink:0}}>
-                  <div style={{fontWeight:700, color:G}}>₦{Number(l.rent_price).toLocaleString()}</div>
+                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(l.rent_price)}</div>
                   <div style={{fontSize:11, color: l.is_available ? '#166534' : '#DC2626'}}>
                     {l.is_available ? 'Available' : 'Occupied'}
                   </div>
@@ -796,7 +810,7 @@ export function AdminPanel() {
                   <div style={ps.agentDetail}>Tenant: {d.tenant_name} · Agent: {d.agent_name}</div>
                 </div>
                 <div style={{textAlign:'right'}}>
-                  <div style={{fontWeight:700, color:G}}>₦{Number(d.rent_amount).toLocaleString()}</div>
+                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(d.rent_amount)}</div>
                   <div style={{fontSize:11, color:'#888'}}>{d.status}</div>
                   {d.status==='escrow_held' && (
                     <button onClick={async()=>{await releaseFunds(d.id);toast.success('Funds released');}} style={ps.relBtn}>Release Funds</button>
@@ -859,7 +873,7 @@ export function AdminPanel() {
                       {d.listing_title} — {d.city}
                     </div>
                     <div style={{fontSize:12, color:'#888', marginBottom:4}}>
-                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{Number(d.rent_amount).toLocaleString()}
+                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{formatNaira(d.rent_amount)}
                     </div>
                     <div style={{fontSize:12, color:'#DC2626', marginBottom:10}}>
                       <strong>Dispute:</strong> {d.dispute_reason}

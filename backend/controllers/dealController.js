@@ -511,21 +511,24 @@ const raiseDispute = async (req, res) => {
           <p>The SouthSwift team will review within 24 hours. Funds remain held in escrow until resolution.</p>
           <p>You will be contacted via SwiftConnect if more information is needed.</p>
         `;
-        await sendEmail({
-          to: p.tenant_email,
-          subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Deal',
-          html: partyBody,
-        });
-        await sendEmail({
-          to: p.agent_email,
-          subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Listing',
-          html: partyBody,
-        });
-        await sendEmail({
-          to: 'ceo@southswift.com.ng',
-          subject: '⚠️ ADMIN: Deal Dispute Raised',
-          html: `<p>Deal ${escapeHtml(req.params.id)} (${escapeHtml(p.listing_title)}) has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`,
-        });
+        // Fire all three in parallel — slow SMTP on one recipient was delaying the others.
+        await Promise.allSettled([
+          p.tenant_email && sendEmail({
+            to: p.tenant_email,
+            subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Deal',
+            html: partyBody,
+          }),
+          p.agent_email && sendEmail({
+            to: p.agent_email,
+            subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Listing',
+            html: partyBody,
+          }),
+          sendEmail({
+            to: 'ceo@southswift.com.ng',
+            subject: '⚠️ ADMIN: Deal Dispute Raised',
+            html: `<p>Deal ${escapeHtml(req.params.id)} (${escapeHtml(p.listing_title)}) has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`,
+          }),
+        ].filter(Boolean));
       } catch (e) {
         console.error('Dispute notification error:', e.message);
       }

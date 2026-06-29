@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { getListing, initiateDeal, getRoomShareStatus, isPaystackCheckoutUrl } from '../utils/api';
+import { formatNaira, todayLocalISO } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, MapPin, Bed, Bath, CheckCircle, Home, Star } from 'lucide-react';
 
@@ -202,9 +203,11 @@ export default function ListingDetail() {
       const paymentUrl = res.data.payment_url;
       if (isPaystackCheckoutUrl(paymentUrl)) {
         window.location.href = paymentUrl;
-      } else {
-        toast.error('Invalid payment URL. Please contact support.');
+        // Don't reset dealing — we're navigating away. Setting state on the about-
+        // to-unmount component is harmless but log-noisy in React dev mode.
+        return;
       }
+      toast.error('Invalid payment URL. Please contact support.');
     } catch (err) {
       if (!err.response) {
         // Timed out / no response — the deal may have been created server-side.
@@ -237,7 +240,8 @@ export default function ListingDetail() {
       <div style={s.container}>
         {/* GALLERY */}
         <div style={s.gallery}>
-          <img src={images[imgIdx]} alt="" style={s.mainImg}
+          {/* alt is informational — see ListingCard for the iOS-overlay reasoning */}
+          <img src={images[imgIdx]} alt={listing.title || 'Property listing'} style={s.mainImg}
             onError={e => { if (e.target.src !== PLACEHOLDER) e.target.src = PLACEHOLDER; }}/>
           {listing.is_swiftshield && (
             <div style={s.shieldBadge}><Shield size={13} color="white" strokeWidth={3}/> SwiftShield Protected</div>
@@ -271,7 +275,7 @@ export default function ListingDetail() {
             {/* Title */}
             <div style={s.titleCard}>
               <div style={s.priceRow}>
-                <span style={s.price}>&#8358;{Number(listing.rent_price).toLocaleString()}</span>
+                <span style={s.price}>&#8358;{formatNaira(listing.rent_price)}</span>
                 <span style={s.period}>/{listing.rent_period==='monthly'?'month':'year'}</span>
               </div>
               <h1 style={s.title}>{listing.title}</h1>
@@ -379,14 +383,19 @@ export default function ListingDetail() {
 
                 return (
                   <>
-                    <div style={s.stepRow}>
+                    <div style={s.stepRow}
+                         role="progressbar"
+                         aria-valuemin={1} aria-valuemax={4} aria-valuenow={stepIdx + 1}
+                         aria-label={`SwiftShield deal step ${stepIdx + 1} of 4`}>
                       {['Booking','SwiftDoc','SwiftCounsel','Pay'].map((label, i) => (
-                        <div key={label} style={{
-                          flex:1, textAlign:'center', fontSize:10, fontWeight:700,
-                          color: i <= stepIdx ? G : '#BBB',
-                          padding:'4px 0',
-                          borderBottom: `3px solid ${i <= stepIdx ? GOLD : '#EEE'}`,
-                        }}>
+                        <div key={label}
+                             aria-current={i === stepIdx ? 'step' : undefined}
+                             style={{
+                               flex:1, textAlign:'center', fontSize:10, fontWeight:700,
+                               color: i <= stepIdx ? G : '#BBB',
+                               padding:'4px 0',
+                               borderBottom: `3px solid ${i <= stepIdx ? GOLD : '#EEE'}`,
+                             }}>
                           {i+1}. {label}
                         </div>
                       ))}
@@ -399,7 +408,7 @@ export default function ListingDetail() {
                         </p>
                         <label style={s.label}>Move-in Date *</label>
                         <input type="date" style={{...s.input, borderColor: formErrors.move_in_date ? '#DC2626' : '#DDD'}} value={form.move_in_date}
-                          min={new Date().toISOString().split('T')[0]}
+                          min={todayLocalISO()}
                           onChange={e => { setForm(f=>({...f,move_in_date:e.target.value})); setFormErrors(fe=>({...fe,move_in_date:''})); }}/>
                         {formErrors.move_in_date && <span style={s.fieldError}>{formErrors.move_in_date}</span>}
                         <label style={s.label}>Lease Duration *</label>

@@ -23,11 +23,13 @@ export default function ListingCard({ listing, distanceKm }) {
 
   return (
     <Link to={`/listings/${id}`} style={s.card}>
-      {/* Image */}
+      {/* Image — alt is informational (listing title) for screen readers. The
+          earlier alt="" was a workaround for iOS Safari painting alt text in
+          link-coloured pixels when the URL failed; the proper fix is the SVG
+          placeholder itself + immediately swapping the src on error so no
+          broken-image state ever paints. */}
       <div style={s.imgWrap}>
-        {/* alt="" intentionally — a non-empty alt would render as link-coloured text
-            on top of the broken-image icon when the URL fails. */}
-        <img src={img} alt="" style={s.img}
+        <img src={img} alt={title || 'Property listing'} style={s.img}
           onError={e => { if (e.target.src !== PLACEHOLDER) e.target.src = PLACEHOLDER; }} />
         {is_swiftshield && (
           <div style={s.shield}>

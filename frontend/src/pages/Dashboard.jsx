@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, updateListing, deleteListing, getBanks, resolveAccount } from '../utils/api';
+import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 
@@ -27,9 +28,6 @@ export function Dashboard() {
   const [banks, setBanks] = useState([]);
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState('');
-
-  const refreshMyListings = () =>
-    getMyListings().then(r => setMyListings(r.data)).catch(()=>{});
 
   const startEdit = (l) => {
     setEditingListingId(l.id);
@@ -69,33 +67,49 @@ export function Dashboard() {
     }
   };
 
+  const refreshMyListings = () =>
+    getMyListings().then(r => {
+      setMyListings(r.data);
+      // If the listing being edited no longer exists (deleted elsewhere), drop the
+      // stale edit panel so Save doesn't 404 against a dead id.
+      setEditingListingId(prev => prev && !r.data.some(l => l.id === prev) ? null : prev);
+    }).catch(()=>{});
+
   useEffect(() => {
+    if (!user?.role) return; // wait until ProtectedRoute resolves the user
     getMyDeals().then(r => setDeals(r.data)).catch(()=>{});
-    if (['agent','admin'].includes(user?.role)) {
-      getMyListings().then(r => setMyListings(r.data)).catch(()=>{});
+    if (['agent','admin'].includes(user.role)) {
+      refreshMyListings();
       getBanks().then(r => setBanks(r.data)).catch(()=>{}); // best-effort; dropdown stays empty if down
     }
-  }, []);
+  }, [user?.role]);
 
   // Debounced Paystack /bank/resolve — fires once both fields look complete.
+  // An AbortController kills any in-flight lookup if the user keeps typing so a
+  // stale response can't overwrite the current account_name with the wrong bank's.
   useEffect(() => {
     if (!['agent','admin'].includes(user?.role)) return;
     if (!/^\d{10}$/.test(verForm.account_number) || !verForm.bank_code) {
       setResolveError('');
+      setResolving(false);
       return;
     }
     setResolving(true);
     setResolveError('');
+    let cancelled = false;
     const t = setTimeout(async () => {
       try {
         const r = await resolveAccount(verForm.account_number, verForm.bank_code);
+        if (cancelled) return;
         setVerForm(f => ({...f, account_name: r.data.account_name}));
       } catch (err) {
+        if (cancelled) return;
         setResolveError(err.response?.data?.error || 'Could not resolve account.');
+      } finally {
+        if (!cancelled) setResolving(false);
       }
-      setResolving(false);
     }, 600);
-    return () => { clearTimeout(t); setResolving(false); };
+    return () => { cancelled = true; clearTimeout(t); };
   }, [verForm.account_number, verForm.bank_code, user?.role]);
 
   const handleVerify = async (e) => {
@@ -179,7 +193,7 @@ export function Dashboard() {
                     <div style={s.dealSub}>{d.city} · {new Date(d.created_at).toLocaleDateString('en-NG')}</div>
                   </div>
                   <div style={s.dealRight}>
-                    <div style={s.dealAmt}>₦{Number(d.rent_amount).toLocaleString()}</div>
+                    <div style={s.dealAmt}>₦{formatNaira(d.rent_amount)}</div>
                     <div style={{...s.statusBadge, background:statusColor[d.status]+'22', color:statusColor[d.status]}}>{d.status.replace(/_/g,' ')}</div>
                   </div>
                 </Link>
@@ -201,7 +215,7 @@ export function Dashboard() {
                       <div style={s.dealSub}>{l.city}, {l.state} · {l.bedrooms} bed · {l.property_type}</div>
                     </div>
                     <div style={s.dealRight}>
-                      <div style={s.dealAmt}>₦{Number(l.rent_price).toLocaleString()}</div>
+                      <div style={s.dealAmt}>₦{formatNaira(l.rent_price)}</div>
                       <div style={{...s.statusBadge, background:l.is_available?'#DCFCE7':'#FEE2E2', color:l.is_available?'#166534':'#DC2626'}}>
                         {l.is_available?'Available':'Occupied'}
                       </div>
