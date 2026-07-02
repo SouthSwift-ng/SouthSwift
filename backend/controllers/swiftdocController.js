@@ -25,6 +25,13 @@ const generateAgreementText = async ({ deal, listing, tenant, agent }) => {
   const genAI  = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model  = genAI.getGenerativeModel({ model: 'gemini-3.1-pro' }, { timeout: 60000 });
 
+  // Collected by the SwiftDoc wizard before payment. pg returns JSONB already parsed;
+  // null for deals initiated before this existed, or via non-wizard paths (admin tools) —
+  // the agreement still generates fine without it, just without the ID/next-of-kin block.
+  const swiftdocData = deal.swiftdoc_data && typeof deal.swiftdoc_data === 'object'
+    ? deal.swiftdoc_data
+    : null;
+
   const moveInDate = deal.move_in_date
     ? new Date(deal.move_in_date).toLocaleDateString('en-NG', { day:'numeric', month:'long', year:'numeric' })
     : 'As agreed';
@@ -53,7 +60,11 @@ LANDLORD'S AGENT (acting on behalf of Landlord):
 TENANT:
 - Name: ${tenant.full_name}
 - Phone: ${tenant.phone}
-- Email: ${tenant.email}
+- Email: ${tenant.email}${swiftdocData ? `
+- National Identity Number (NIN): ${swiftdocData.tenant_nin}
+- Occupation: ${swiftdocData.occupation}${swiftdocData.employer ? `
+- Employer/Business: ${swiftdocData.employer}` : ''}
+- Next of Kin: ${swiftdocData.next_of_kin_name} (${swiftdocData.next_of_kin_phone})` : ''}
 
 PROPERTY:
 - Full Address: ${listing.address}, ${listing.city}, ${listing.state} State, Nigeria

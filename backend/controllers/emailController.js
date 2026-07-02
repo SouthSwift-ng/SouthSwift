@@ -1,9 +1,19 @@
 const nodemailer = require('nodemailer');
 
+const emailHost = process.env.EMAIL_HOST || 'smtp.yandex.com';
+const emailPort = parseInt(process.env.EMAIL_PORT) || 465;
+// 465 = implicit TLS (secure:true) from the first byte. Any other port (587, 25) is
+// STARTTLS — the connection starts plaintext and upgrades. secure:true on 587 sends a
+// TLS ClientHello a plaintext-expecting server never replies to — the connection just
+// hangs until it times out ("Connection timeout" with no other clue). requireTLS keeps
+// the STARTTLS upgrade mandatory rather than optional.
+const emailSecure = emailPort === 465;
+
 const transporter = nodemailer.createTransport({
-  host:   process.env.EMAIL_HOST || 'smtp.yandex.com',
-  port:   parseInt(process.env.EMAIL_PORT) || 465,
-  secure: true,
+  host:   emailHost,
+  port:   emailPort,
+  secure: emailSecure,
+  requireTLS: !emailSecure,
   family: 4, // Force IPv4 — Render has no outbound IPv6 route, so AAAA (e.g. Yandex) connections fail with ENETUNREACH
   auth: {
     user: process.env.EMAIL_USER,
@@ -17,6 +27,10 @@ const transporter = nodemailer.createTransport({
   greetingTimeout:   8000,
   socketTimeout:     10000,
 });
+
+if (process.env.EMAIL_USER) {
+  console.log(`📧 SMTP configured: ${emailHost}:${emailPort} (${emailSecure ? 'implicit TLS' : 'STARTTLS'}) as ${process.env.EMAIL_USER}`);
+}
 
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
