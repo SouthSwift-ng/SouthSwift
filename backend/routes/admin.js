@@ -15,5 +15,6 @@ router.put('/deals/:id/resolve-dispute', adminController.resolveDispute);
 router.get('/users',                  adminController.getUsers);
 router.get('/listings',               adminController.getAllListings);
 router.delete('/listings',            adminController.deleteListingsBulk);
+router.post('/test-email',            adminController.sendTestEmail);
 
 module.exports = router;

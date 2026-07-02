@@ -774,6 +774,37 @@ const adminController = {
       res.status(500).json({ error: `Bulk delete failed: ${String(err.message || '').split('\n')[0].slice(0,200)}` });
     }
   },
+
+  // POST /api/admin/test-email — verify SMTP config is actually working. Unlike every
+  // other sendEmail() call site (which swallows failures and only logs), this one
+  // returns the real {ok, error} synchronously so a config change (new provider, new
+  // credentials) can be confirmed over HTTP without needing server log access.
+  sendTestEmail: async (req, res) => {
+    const { sendEmail } = require('./emailController');
+    const to = (req.body?.to && String(req.body.to).trim()) || 'ceo@southswift.com.ng';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(to)) return res.status(400).json({ error: 'Invalid email address.' });
+
+    const startedAt = Date.now();
+    const result = await sendEmail({
+      to,
+      subject: '✅ SouthSwift — SMTP Test Email',
+      html: `
+        <p>This is a test email triggered from the SouthSwift admin panel.</p>
+        <p>If you're reading this, outbound email (host: <code>${escapeHtml(process.env.EMAIL_HOST || 'smtp.yandex.com (default)')}</code>,
+           sender: <code>${escapeHtml(process.env.EMAIL_USER || 'not set')}</code>) is working correctly.</p>
+        <p>Sent at: ${new Date().toISOString()}</p>
+      `,
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    if (result.ok) {
+      return res.json({ message: `Test email sent to ${to}.`, elapsed_ms: elapsedMs });
+    }
+    // Surface the real SMTP error (auth failure, wrong host, connection refused) so
+    // the operator doesn't have to go digging in Render logs to diagnose it.
+    return res.status(502).json({ error: `Email send failed: ${result.error}`, elapsed_ms: elapsedMs });
+  },
 };
 
 module.exports = { agentController, adminController };

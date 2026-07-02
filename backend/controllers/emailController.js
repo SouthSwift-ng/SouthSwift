@@ -9,6 +9,13 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  // nodemailer's defaults (2min connect, 10min socket) can hang a request WAY past
+  // Express's 30s response timeout — a stuck SMTP handshake then looks like a generic
+  // "Request timed out" with no indication email was the cause. Bound it tight so a
+  // bad host/port/credential fails loud within a few seconds, in the logs.
+  connectionTimeout: 8000,
+  greetingTimeout:   8000,
+  socketTimeout:     10000,
 });
 
 const sendEmail = async ({ to, subject, html, text }) => {
