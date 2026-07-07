@@ -16,5 +16,6 @@ router.get('/users',                  adminController.getUsers);
 router.get('/listings',               adminController.getAllListings);
 router.delete('/listings',            adminController.deleteListingsBulk);
 router.post('/test-email',            adminController.sendTestEmail);
+router.post('/test-swiftdoc',         adminController.sendTestSwiftDoc);
 
 module.exports = router;
