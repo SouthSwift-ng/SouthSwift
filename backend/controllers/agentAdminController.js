@@ -775,8 +775,8 @@ const adminController = {
     }
   },
 
-  // POST /api/admin/test-email — verify SMTP config is actually working. Unlike every
-  // other sendEmail() call site (which swallows failures and only logs), this one
+  // POST /api/admin/test-email — verify the email transport is actually working. Unlike
+  // every other sendEmail() call site (which swallows failures and only logs), this one
   // returns the real {ok, error} synchronously so a config change (new provider, new
   // credentials) can be confirmed over HTTP without needing server log access.
   sendTestEmail: async (req, res) => {
@@ -788,11 +788,10 @@ const adminController = {
     const startedAt = Date.now();
     const result = await sendEmail({
       to,
-      subject: '✅ SouthSwift — SMTP Test Email',
+      subject: '✅ SouthSwift — Email Transport Test',
       html: `
         <p>This is a test email triggered from the SouthSwift admin panel.</p>
-        <p>If you're reading this, outbound email (host: <code>${escapeHtml(process.env.EMAIL_HOST || 'smtp.yandex.com (default)')}</code>,
-           sender: <code>${escapeHtml(process.env.EMAIL_USER || 'not set')}</code>) is working correctly.</p>
+        <p>If you're reading this, outbound email (via Resend's HTTP API) is working correctly.</p>
         <p>Sent at: ${new Date().toISOString()}</p>
       `,
     });
@@ -801,9 +800,70 @@ const adminController = {
     if (result.ok) {
       return res.json({ message: `Test email sent to ${to}.`, elapsed_ms: elapsedMs });
     }
-    // Surface the real SMTP error (auth failure, wrong host, connection refused) so
-    // the operator doesn't have to go digging in Render logs to diagnose it.
+    // Surface the real send error (bad API key, unverified domain, etc.) so the
+    // operator doesn't have to go digging in Render logs to diagnose it.
     return res.status(502).json({ error: `Email send failed: ${result.error}`, elapsed_ms: elapsedMs });
+  },
+
+  // POST /api/admin/test-swiftdoc — exercises the FULL SwiftDoc pipeline (Gemini text
+  // generation → pdfkit PDF render → Cloudinary upload → email to both parties) without
+  // needing a real payment to reach escrow_held. Two modes:
+  //   { deal_id: "<uuid>" }         — regenerate against a real, existing deal's data
+  //   { test_email: "you@x.com" }   — synthetic mock data, sent to your own address
+  // Returns the real success/failure so Gemini/Cloudinary/email misconfig surfaces
+  // immediately instead of silently vanishing into swiftdoc_error on some future deal.
+  // NOTE: on success this creates a REAL Cloudinary file and sends REAL emails — this
+  // is a genuine integration test, not a dry run.
+  sendTestSwiftDoc: async (req, res) => {
+    const { generateSwiftDoc } = require('./swiftdocController');
+    let deal, listing, tenant, agent;
+
+    try {
+      if (req.body?.deal_id) {
+        const uuidRe = /^[0-9a-fA-F-]{36}$/;
+        if (!uuidRe.test(req.body.deal_id)) return res.status(400).json({ error: 'deal_id is not a valid UUID.' });
+
+        const dealRes = await pool.query('SELECT * FROM deals WHERE id=$1', [req.body.deal_id]);
+        if (!dealRes.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+        deal = dealRes.rows[0];
+
+        const [listingRes, tenantRes, agentRes] = await Promise.all([
+          pool.query('SELECT * FROM listings WHERE id=$1', [deal.listing_id]),
+          pool.query('SELECT * FROM users WHERE id=$1', [deal.tenant_id]),
+          pool.query('SELECT * FROM users WHERE id=$1', [deal.agent_id]),
+        ]);
+        if (!listingRes.rows.length || !tenantRes.rows.length || !agentRes.rows.length)
+          return res.status(404).json({ error: 'Deal references a missing listing, tenant, or agent.' });
+        listing = listingRes.rows[0]; tenant = tenantRes.rows[0]; agent = agentRes.rows[0];
+      } else {
+        const testEmail = (req.body?.test_email && String(req.body.test_email).trim()) || 'ceo@southswift.com.ng';
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(testEmail)) return res.status(400).json({ error: 'Invalid test_email address.' });
+
+        deal = {
+          id: `test-${Date.now()}`, rent_amount: 500000, total_paid: 512500,
+          service_fee_tenant: 12500, service_fee_landlord: 12500,
+          lease_duration_months: 12, move_in_date: new Date().toISOString(),
+          paystack_reference: 'TEST-REFERENCE',
+          swiftdoc_data: {
+            tenant_nin: '12345678901', occupation: 'Software Engineer', employer: 'Test Company Ltd',
+            next_of_kin_name: 'Test Next-of-Kin', next_of_kin_phone: '+2348000000000',
+          },
+        };
+        listing = { address: '1 Test Street', city: 'Lagos', state: 'Lagos', property_type: 'apartment', bedrooms: 2, bathrooms: 2, rent_period: 'yearly' };
+        tenant = { full_name: 'Test Tenant', phone: '+2348011111111', email: testEmail };
+        agent  = { full_name: 'Test Agent', agency_name: 'Test Agency', phone: '+2348022222222', email: testEmail };
+      }
+
+      const result = await generateSwiftDoc({ deal, listing, tenant, agent });
+      if (result.url) {
+        return res.json({ message: 'SwiftDoc generated successfully.', url: result.url, warning: result.error || null });
+      }
+      return res.status(502).json({ error: `SwiftDoc generation failed: ${result.error}` });
+    } catch (err) {
+      console.error('test-swiftdoc error:', err.message);
+      return res.status(500).json({ error: `Test failed: ${err.message}` });
+    }
   },
 };
 
