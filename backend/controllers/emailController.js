@@ -29,6 +29,13 @@ const sendEmail = async ({ to, subject, html, text }) => {
     console.error('❌ Email send error: RESEND_API_KEY not configured');
     return { ok: false, error: 'Email not configured' };
   }
+  if (!html && !text) {
+    // Every current call site always passes html — this guards a future caller that
+    // forgets to, which previously rendered the literal string "<p>undefined</p>" as
+    // the entire email body and reported success.
+    console.error('❌ Email send error: no html or text content provided');
+    return { ok: false, error: 'No email content provided' };
+  }
   try {
     await axios.post('https://api.resend.com/emails', {
       from:    EMAIL_FROM,
