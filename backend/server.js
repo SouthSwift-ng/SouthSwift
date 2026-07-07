@@ -53,7 +53,11 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || WEAK_SECRET
 const REQUIRED_ENV = [
   'DATABASE_URL', 'PAYSTACK_SECRET_KEY', 'CLIENT_URL',
   'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET',
-  'EMAIL_USER', 'EMAIL_PASS',
+  // Email now sends via Resend's HTTP API (see emailController.js) — EMAIL_USER is a
+  // leftover from the old SMTP setup and no longer read anywhere. EMAIL_PASS is kept as
+  // the required var since it doubles as the Resend API key (RESEND_API_KEY preferred
+  // if set instead).
+  'EMAIL_PASS',
 ];
 const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
 if (missingEnv.length) {
