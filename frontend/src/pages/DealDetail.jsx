@@ -831,7 +831,7 @@ export function AdminPanel() {
                   <table style={{width:'100%', borderCollapse:'collapse', background:'white', borderRadius:10, overflow:'hidden', border:'1px solid #E5E7EB'}}>
                     <thead>
                       <tr style={{background:G, color:'white'}}>
-                        {['Email','Phone','Role','City','State','Signed Up'].map(h => (
+                        {['Email','Phone','Role','City','State','Signed Up','Notification'].map(h => (
                           <th key={h} style={{padding:'10px 14px', textAlign:'left', fontSize:12, fontWeight:700}}>{h}</th>
                         ))}
                       </tr>
@@ -850,6 +850,17 @@ export function AdminPanel() {
                           <td style={{padding:'10px 14px', fontSize:13, color:'#444'}}>{w.state || '—'}</td>
                           <td style={{padding:'10px 14px', fontSize:12, color:'#888'}}>
                             {new Date(w.created_at).toLocaleDateString('en-NG')}
+                          </td>
+                          <td style={{padding:'10px 14px', fontSize:12}}>
+                            {w.email_error ? (
+                              <span title={w.email_error} style={{background:'#FEE2E2', color:'#DC2626', padding:'2px 8px', borderRadius:10, fontWeight:700, cursor:'help'}}>
+                                ⚠ Failed
+                              </span>
+                            ) : (
+                              <span style={{background:'#DCFCE7', color:'#166534', padding:'2px 8px', borderRadius:10, fontWeight:700}}>
+                                ✓ Sent
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}

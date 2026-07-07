@@ -241,6 +241,15 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS payment_anomaly TEXT;
     `);
 
+    // Waitlist confirmation/admin-alert emails send in the background after the
+    // signup response — mirrors the swiftdoc_error pattern so a systemic email
+    // outage (bad API key, lapsed domain verification) is visible via a DB query
+    // instead of only an ephemeral Render log line nobody's tailing.
+    await client.query(`
+      ALTER TABLE waitlist
+        ADD COLUMN IF NOT EXISTS email_error TEXT;
+    `);
+
     // Allow 'archived' status on existing databases (CHECK constraint predates it)
     await client.query(`
       ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;
