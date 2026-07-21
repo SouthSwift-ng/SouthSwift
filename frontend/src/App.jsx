@@ -13,6 +13,7 @@ import CreateListing from './pages/CreateListing';
 import DealDetail    from './pages/DealDetail';
 import AdminPanel    from './pages/AdminPanel';
 import AgentProfile  from './pages/AgentProfile';
+import ClientFunnel  from './pages/ClientFunnel';
 import Navbar        from './components/Navbar';
 import { PrivacyPolicy, TermsOfService, EscrowPolicy } from './pages/LegalPages';
 
@@ -77,6 +78,7 @@ export default function App() {
             <Route path="/listings"    element={<Home />} />
             <Route path="/login"       element={<Login />} />
             <Route path="/register"    element={<Register />} />
+            <Route path="/client-funnel" element={<ClientFunnel />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
             <Route path="/agents/:id"  element={<AgentProfile />} />
             <Route path="/privacy-policy"   element={<PrivacyPolicy />} />

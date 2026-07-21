@@ -145,4 +145,7 @@ export const deleteListingsBulk = (ids)            => API.delete('/admin/listing
 export const joinWaitlist = (data) => API.post('/waitlist', data);
 export const getWaitlist  = ()     => API.get('/waitlist');
 
+// ── CLIENT FUNNEL ─────────────────────────────────────────────────────────────
+export const submitClientFunnel = (data) => API.post('/client-funnel', data);
+
 export default API;

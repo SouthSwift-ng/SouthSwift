@@ -26,6 +26,7 @@ const paymentRoutes = require('./routes/payments');
 const messageRoutes = require('./routes/messages');
 const reviewRoutes  = require('./routes/reviews');
 const waitlistRoutes= require('./routes/waitlist');
+const clientFunnelRoutes = require('./routes/clientFunnel');
 
 const rateLimit = require('express-rate-limit');
 
@@ -179,6 +180,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/reviews',  reviewRoutes);
 app.use('/api/waitlist', waitlistRoutes);
+app.use('/api/client-funnel', clientFunnelRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

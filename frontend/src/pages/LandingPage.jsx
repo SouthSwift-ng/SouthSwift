@@ -98,7 +98,7 @@ export default function LandingPage() {
             </p>
             <div style={s.heroBtns}>
               <button onClick={() => navigate('/listings')} style={s.heroBtnPrimary}>Find a Property</button>
-              <button onClick={() => navigate('/register?role=agent')} style={s.heroBtnSecondary}>List a Property</button>
+              <button onClick={() => navigate('/client-funnel')} style={s.heroBtnSecondary}>Start Guided Onboarding</button>
             </div>
           </div>
 
@@ -321,8 +321,8 @@ export default function LandingPage() {
                 <li key={item} style={s.agentListItem}>✓ {item}</li>
               ))}
             </ul>
-            <button onClick={() => navigate('/register?role=agent')} style={s.agentBtn}>
-              Become a Verified Agent →
+            <button onClick={() => navigate('/client-funnel')} style={s.agentBtn}>
+              Start your SouthSwift journey →
             </button>
           </div>
           <div style={s.agentRight}>
