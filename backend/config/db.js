@@ -15,6 +15,165 @@ pool.on('error', (err) => {
 });
 
 // ── CREATE ALL TABLES ─────────────────────────────────────────────────────────
+const buildInitSqlStatements = () => `
+
+  -- USERS TABLE
+  CREATE TABLE IF NOT EXISTS users (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    full_name     VARCHAR(255) NOT NULL,
+    email         VARCHAR(255) UNIQUE NOT NULL,
+    phone         VARCHAR(20) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role          VARCHAR(20) NOT NULL DEFAULT 'tenant'
+                  CHECK (role IN ('tenant','landlord','agent','admin')),
+    is_verified   BOOLEAN DEFAULT false,
+    nin           VARCHAR(20),
+    avatar_url    TEXT,
+    state         VARCHAR(100),
+    city          VARCHAR(100),
+    created_at    TIMESTAMP DEFAULT NOW(),
+    updated_at    TIMESTAMP DEFAULT NOW()
+  );
+
+  -- AGENT PROFILES TABLE
+  CREATE TABLE IF NOT EXISTS agent_profiles (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id              UUID REFERENCES users(id) ON DELETE CASCADE,
+    agency_name          VARCHAR(255),
+    nin                  VARCHAR(20) NOT NULL,
+    id_document_url      TEXT,
+    selfie_url           TEXT,
+    verification_status  VARCHAR(20) DEFAULT 'pending'
+                         CHECK (verification_status IN ('pending','verified','rejected')),
+    verified_at          TIMESTAMP,
+    verified_by          UUID REFERENCES users(id),
+    total_deals          INTEGER DEFAULT 0,
+    rating               DECIMAL(3,2) DEFAULT 0.00,
+    bio                  TEXT,
+    created_at           TIMESTAMP DEFAULT NOW(),
+    account_number       VARCHAR(20),
+    bank_code            VARCHAR(10),
+    account_name         VARCHAR(255),
+    paystack_recipient_code VARCHAR(100),
+    dojah_nin_match      BOOLEAN DEFAULT false,
+    dojah_face_score     INTEGER DEFAULT 0,
+    updated_at           TIMESTAMP DEFAULT NOW(),
+    intro_video_url      TEXT
+  );
+
+  -- PROPERTY LISTINGS TABLE
+  CREATE TABLE IF NOT EXISTS listings (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id                   UUID REFERENCES users(id) ON DELETE CASCADE,
+    title                      VARCHAR(255) NOT NULL,
+    description                TEXT,
+    property_type              VARCHAR(50) CHECK (property_type IN ('apartment','house','room','duplex','bungalow','studio')),
+    bedrooms                   INTEGER DEFAULT 1,
+    bathrooms                  INTEGER DEFAULT 1,
+    rent_price                 BIGINT NOT NULL,
+    rent_period                VARCHAR(20) DEFAULT 'yearly' CHECK (rent_period IN ('monthly','yearly')),
+    address                    TEXT NOT NULL,
+    city                       VARCHAR(100) NOT NULL,
+    state                      VARCHAR(100) NOT NULL,
+    latitude                   DECIMAL(10,8),
+    longitude                  DECIMAL(11,8),
+    is_swiftshield             BOOLEAN DEFAULT true,
+    is_available               BOOLEAN DEFAULT true,
+    images                     TEXT[],
+    amenities                  TEXT[],
+    created_at                 TIMESTAMP DEFAULT NOW(),
+    updated_at                 TIMESTAMP DEFAULT NOW(),
+    is_room_share              BOOLEAN DEFAULT false,
+    room_share_price_per_person BIGINT,
+    room_share_slots           INTEGER DEFAULT 1,
+    room_share_slots_filled    INTEGER DEFAULT 0,
+    videos                     TEXT[]
+  );
+
+  -- DEALS TABLE (SwiftShield Escrow Transactions)
+  CREATE TABLE IF NOT EXISTS deals (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    listing_id              UUID REFERENCES listings(id),
+    tenant_id               UUID REFERENCES users(id),
+    agent_id                UUID REFERENCES users(id),
+    landlord_id             UUID REFERENCES users(id),
+    rent_amount             BIGINT NOT NULL,
+    service_fee_tenant      BIGINT NOT NULL,
+    service_fee_landlord    BIGINT NOT NULL,
+    total_paid              BIGINT NOT NULL,
+    status                  VARCHAR(30) DEFAULT 'initiated'
+                            CHECK (status IN (
+                              'initiated','payment_pending','escrow_held',
+                              'docs_generated','movein_pending','completed','disputed','cancelled','archived'
+                            )),
+    paystack_reference      VARCHAR(255),
+    paystack_access_code    VARCHAR(255),
+    swiftdoc_url            TEXT,
+    swiftdoc_generated      BOOLEAN DEFAULT false,
+    tenant_confirmed_at     TIMESTAMP,
+    funds_released_at       TIMESTAMP,
+    dispute_reason          TEXT,
+    notes                   TEXT,
+    move_in_date            DATE,
+    lease_duration_months  INTEGER DEFAULT 12,
+    created_at              TIMESTAMP DEFAULT NOW(),
+    updated_at              TIMESTAMP DEFAULT NOW(),
+    is_room_share_deal      BOOLEAN DEFAULT false,
+    room_share_slot_number  INTEGER,
+    cancellation_reason     TEXT,
+    cancelled_by            UUID REFERENCES users(id),
+    swiftdoc_error          TEXT,
+    refunded_at             TIMESTAMP,
+    swiftdoc_data           JSONB,
+    payment_anomaly         TEXT
+  );
+
+  -- MESSAGES TABLE (SwiftConnect)
+  CREATE TABLE IF NOT EXISTS messages (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    deal_id     UUID REFERENCES deals(id),
+    sender_id   UUID REFERENCES users(id),
+    receiver_id UUID REFERENCES users(id),
+    content     TEXT NOT NULL,
+    is_read     BOOLEAN DEFAULT false,
+    created_at  TIMESTAMP DEFAULT NOW()
+  );
+
+  -- NOTIFICATIONS TABLE
+  CREATE TABLE IF NOT EXISTS notifications (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID REFERENCES users(id),
+    title      VARCHAR(255) NOT NULL,
+    body       TEXT NOT NULL,
+    is_read    BOOLEAN DEFAULT false,
+    type       VARCHAR(50),
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+
+  -- REVIEWS TABLE
+  CREATE TABLE IF NOT EXISTS reviews (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    deal_id     UUID REFERENCES deals(id),
+    reviewer_id UUID REFERENCES users(id),
+    agent_id    UUID REFERENCES users(id),
+    rating      INTEGER CHECK (rating BETWEEN 1 AND 5),
+    comment     TEXT,
+    created_at  TIMESTAMP DEFAULT NOW()
+  );
+
+  -- WAITLIST TABLE
+  CREATE TABLE IF NOT EXISTS waitlist (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email      VARCHAR(255) UNIQUE NOT NULL,
+    phone      VARCHAR(20),
+    role       VARCHAR(20) CHECK (role IN ('tenant','agent','landlord')),
+    city       VARCHAR(100),
+    state      VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW(),
+    email_error TEXT
+  );
+`;
+
 const initDB = async () => {
   if (!process.env.DATABASE_URL) {
     console.warn('⚠️  DATABASE_URL not configured. Skipping database initialization.');
@@ -22,143 +181,7 @@ const initDB = async () => {
   }
   const client = await pool.connect();
   try {
-    await client.query(`
-
-      -- USERS TABLE
-      CREATE TABLE IF NOT EXISTS users (
-        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        full_name     VARCHAR(255) NOT NULL,
-        email         VARCHAR(255) UNIQUE NOT NULL,
-        phone         VARCHAR(20) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        role          VARCHAR(20) NOT NULL DEFAULT 'tenant'
-                      CHECK (role IN ('tenant','landlord','agent','admin')),
-        is_verified   BOOLEAN DEFAULT false,
-        nin           VARCHAR(20),
-        avatar_url    TEXT,
-        state         VARCHAR(100),
-        city          VARCHAR(100),
-        created_at    TIMESTAMP DEFAULT NOW(),
-        updated_at    TIMESTAMP DEFAULT NOW()
-      );
-
-      -- AGENT PROFILES TABLE
-      CREATE TABLE IF NOT EXISTS agent_profiles (
-        id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id            UUID REFERENCES users(id) ON DELETE CASCADE,
-        agency_name        VARCHAR(255),
-        nin                VARCHAR(20) NOT NULL,
-        id_document_url    TEXT,
-        selfie_url         TEXT,
-        verification_status VARCHAR(20) DEFAULT 'pending'
-                            CHECK (verification_status IN ('pending','verified','rejected')),
-        verified_at        TIMESTAMP,
-        verified_by        UUID REFERENCES users(id),
-        total_deals        INTEGER DEFAULT 0,
-        rating             DECIMAL(3,2) DEFAULT 0.00,
-        bio                TEXT,
-        created_at         TIMESTAMP DEFAULT NOW()
-      );
-
-      -- PROPERTY LISTINGS TABLE
-      CREATE TABLE IF NOT EXISTS listings (
-        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        agent_id        UUID REFERENCES users(id) ON DELETE CASCADE,
-        title           VARCHAR(255) NOT NULL,
-        description     TEXT,
-        property_type   VARCHAR(50) CHECK (property_type IN ('apartment','house','room','duplex','bungalow','studio')),
-        bedrooms        INTEGER DEFAULT 1,
-        bathrooms       INTEGER DEFAULT 1,
-        rent_price      BIGINT NOT NULL,
-        rent_period     VARCHAR(20) DEFAULT 'yearly' CHECK (rent_period IN ('monthly','yearly')),
-        address         TEXT NOT NULL,
-        city            VARCHAR(100) NOT NULL,
-        state           VARCHAR(100) NOT NULL,
-        latitude        DECIMAL(10,8),
-        longitude       DECIMAL(11,8),
-        is_swiftshield  BOOLEAN DEFAULT true,
-        is_available    BOOLEAN DEFAULT true,
-        images          TEXT[],
-        amenities       TEXT[],
-        created_at      TIMESTAMP DEFAULT NOW(),
-        updated_at      TIMESTAMP DEFAULT NOW()
-      );
-
-      -- DEALS TABLE (SwiftShield Escrow Transactions)
-      CREATE TABLE IF NOT EXISTS deals (
-        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        listing_id        UUID REFERENCES listings(id),
-        tenant_id         UUID REFERENCES users(id),
-        agent_id          UUID REFERENCES users(id),
-        landlord_id       UUID REFERENCES users(id),
-        rent_amount       BIGINT NOT NULL,
-        service_fee_tenant    BIGINT NOT NULL,
-        service_fee_landlord  BIGINT NOT NULL,
-        total_paid        BIGINT NOT NULL,
-        status            VARCHAR(30) DEFAULT 'initiated'
-                          CHECK (status IN (
-                            'initiated','payment_pending','escrow_held',
-                            'docs_generated','movein_pending','completed','disputed','cancelled','archived'
-                          )),
-        paystack_reference    VARCHAR(255),
-        paystack_access_code  VARCHAR(255),
-        swiftdoc_url          TEXT,
-        swiftdoc_generated    BOOLEAN DEFAULT false,
-        tenant_confirmed_at   TIMESTAMP,
-        funds_released_at     TIMESTAMP,
-        dispute_reason        TEXT,
-        notes                 TEXT,
-        move_in_date          DATE,
-        lease_duration_months INTEGER DEFAULT 12,
-        created_at            TIMESTAMP DEFAULT NOW(),
-        updated_at            TIMESTAMP DEFAULT NOW()
-      );
-
-      -- MESSAGES TABLE (SwiftConnect)
-      CREATE TABLE IF NOT EXISTS messages (
-        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        deal_id     UUID REFERENCES deals(id),
-        sender_id   UUID REFERENCES users(id),
-        receiver_id UUID REFERENCES users(id),
-        content     TEXT NOT NULL,
-        is_read     BOOLEAN DEFAULT false,
-        created_at  TIMESTAMP DEFAULT NOW()
-      );
-
-      -- NOTIFICATIONS TABLE
-      CREATE TABLE IF NOT EXISTS notifications (
-        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id    UUID REFERENCES users(id),
-        title      VARCHAR(255) NOT NULL,
-        body       TEXT NOT NULL,
-        is_read    BOOLEAN DEFAULT false,
-        type       VARCHAR(50),
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-
-      -- REVIEWS TABLE
-      CREATE TABLE IF NOT EXISTS reviews (
-        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        deal_id     UUID REFERENCES deals(id),
-        reviewer_id UUID REFERENCES users(id),
-        agent_id    UUID REFERENCES users(id),
-        rating      INTEGER CHECK (rating BETWEEN 1 AND 5),
-        comment     TEXT,
-        created_at  TIMESTAMP DEFAULT NOW()
-      );
-
-      -- WAITLIST TABLE
-      CREATE TABLE IF NOT EXISTS waitlist (
-        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email      VARCHAR(255) UNIQUE NOT NULL,
-        phone      VARCHAR(20),
-        role       VARCHAR(20) CHECK (role IN ('tenant','agent','landlord')),
-        city       VARCHAR(100),
-        state      VARCHAR(100),
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-
-    `);
+    await client.query(buildInitSqlStatements());
 
     // Create admin user if not exists — password MUST come from env var
     const bcrypt = require('bcryptjs');
@@ -352,4 +375,4 @@ const initDB = async () => {
   }
 };
 
-module.exports = { pool, initDB };
+module.exports = { pool, initDB, buildInitSqlStatements };
