@@ -1,6 +1,8 @@
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
 const { pool } = require('../config/db');
+const { sendWelcomeEmail, generateOTP, sendOTPEmail } = require('../utils/emailService');
+const { redis } = require('../config/redis');
 
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -24,8 +26,8 @@ const register = async (req, res) => {
 
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, phone, password_hash, role, state, city)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, full_name, email, role, is_verified`,
+      `INSERT INTO users (full_name, email, phone, password_hash, role, state, city, is_verified)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,false) RETURNING id, full_name, email, role, is_verified`,
       [full_name, email, phone, hash, userRole, state||null, city||null]
     );
 
@@ -39,11 +41,45 @@ const register = async (req, res) => {
       );
     }
 
-    res.status(201).json({ user, token: generateToken(user.id) });
+    // Generate and store OTP in Redis
+    const otpCode = generateOTP();
+    const otpKey = `otp:${email}`;
+    const attemptsKey = `otp_attempts:${email}`;
+    
+    // Store OTP with 10 minute expiry
+    await redis.setEx(otpKey, 600, JSON.stringify({
+      otp: otpCode,
+      userId: user.id,
+      email: email,
+      fullName: full_name,
+      attempts: 0,
+      createdAt: new Date().toISOString()
+    }));
+
+    // Reset attempts counter
+    await redis.del(attemptsKey);
+
+    // Send OTP email (non-blocking)
+    sendOTPEmail(email, full_name, otpCode);
+
+    res.status(201).json({ 
+      message: 'Account created successfully. Please check your email for verification code.',
+      user: { 
+        id: user.id, 
+        full_name: user.full_name, 
+        email: user.email, 
+        role: user.role,
+        is_verified: false 
+      },
+      requiresVerification: true
+    });
+
   } catch (err) {
-    console.error(err.message); res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    console.error(err.message); 
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
-};
+}; 
+   
 
 // POST /api/auth/login
 const login = async (req, res) => {
@@ -56,7 +92,17 @@ const login = async (req, res) => {
     const dummyHash = '$2a$12$000000000000000000000u2jCmrIRyBhNJLGHOb3DOiGH0FD2TFVC';
     const user = result.rows[0];
     const match = await bcrypt.compare(password, user ? user.password_hash : dummyHash);
+    
     if (!user || !match) return res.status(401).json({ error: 'Invalid credentials.' });
+
+    // Check if user is verified
+    if (!user.is_verified) {
+      return res.status(403).json({ 
+        error: 'Please verify your email address before logging in.',
+        requiresVerification: true,
+        email: user.email
+      });
+    }
 
     const { password_hash, ...safeUser } = user;
     res.json({ user: safeUser, token: generateToken(user.id) });
@@ -100,4 +146,137 @@ const updateProfile = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, updateProfile };
+// POST /api/auth/verify-otp
+const verifyOTP = async (req, res) => {
+  const { email, otp_code } = req.body;
+
+  if (!email || !otp_code) {
+    return res.status(400).json({ error: 'Email and OTP code are required.' });
+  }
+
+  try {
+    const otpKey = `otp:${email}`;
+    const attemptsKey = `otp_attempts:${email}`;
+
+    // Get OTP data from Redis
+    const otpData = await redis.get(otpKey);
+    
+    if (!otpData) {
+      return res.status(400).json({ error: 'Invalid or expired verification code.' });
+    }
+
+    const { otp, userId, attempts } = JSON.parse(otpData);
+
+    // Check attempts (max 5)
+    const currentAttempts = parseInt(await redis.get(attemptsKey) || '0');
+    if (currentAttempts >= 5) {
+      await redis.del(otpKey); // Clear the OTP
+      return res.status(429).json({ error: 'Too many failed attempts. Please request a new verification code.' });
+    }
+
+    // Verify OTP code
+    if (otp !== otp_code) {
+      // Increment attempts
+      await redis.setEx(attemptsKey, 600, (currentAttempts + 1).toString());
+      return res.status(400).json({ error: 'Invalid verification code.' });
+    }
+
+    // OTP is valid, update user
+    await pool.query(
+      'UPDATE users SET is_verified = true, updated_at = NOW() WHERE id = $1',
+      [userId]
+    );
+
+    // Clean up Redis keys
+    await redis.del(otpKey);
+    await redis.del(attemptsKey);
+
+    // Get updated user data
+    const userResult = await pool.query(
+      'SELECT id, full_name, email, role, is_verified FROM users WHERE id = $1',
+      [userId]
+    );
+
+    const user = userResult.rows[0];
+
+    // Send welcome email now that user is verified (non-blocking)
+    sendWelcomeEmail(user.email, user.full_name, user.role);
+
+    res.json({ 
+      message: 'Email verified successfully! Welcome to SouthSwift.',
+      user,
+      token: generateToken(user.id)
+    });
+
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+};
+
+// POST /api/auth/resend-otp
+const resendOTP = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required.' });
+  }
+
+  try {
+    // Check if user exists and is not verified
+    const userResult = await pool.query(
+      'SELECT id, full_name, is_verified FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ error: 'No account found with this email.' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (user.is_verified) {
+      return res.status(400).json({ error: 'This account is already verified.' });
+    }
+
+    // Check cooldown period (5 minutes)
+    const cooldownKey = `otp_cooldown:${email}`;
+    const cooldownExists = await redis.exists(cooldownKey);
+    
+    if (cooldownExists) {
+      return res.status(429).json({ error: 'Please wait 5 minutes before requesting a new code.' });
+    }
+
+    // Generate new OTP
+    const otpCode = generateOTP();
+    const otpKey = `otp:${email}`;
+    const attemptsKey = `otp_attempts:${email}`;
+
+    // Store new OTP with 10 minute expiry
+    await redis.setEx(otpKey, 600, JSON.stringify({
+      otp: otpCode,
+      userId: user.id,
+      email: email,
+      fullName: user.full_name,
+      attempts: 0,
+      createdAt: new Date().toISOString()
+    }));
+
+    // Set 5-minute cooldown for resend
+    await redis.setEx(cooldownKey, 300, '1');
+
+    // Reset attempts counter
+    await redis.del(attemptsKey);
+
+    // Send OTP email (non-blocking)
+    sendOTPEmail(email, user.full_name, otpCode);
+
+    res.json({ message: 'New verification code sent to your email.' });
+
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+};
+
+module.exports = { register, login, getMe, updateProfile, verifyOTP, resendOTP };

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { loginUser, registerUser } from '../utils/api';
 import { useAuth } from '../App';
 import { Shield } from 'lucide-react';
+import OTPVerification from '../components/OTPVerification';
 
 const G = '#1B4332'; const GOLD = '#C8963C';
 
@@ -23,7 +24,13 @@ export function Login() {
       toast.success(`Welcome back, ${res.data.user.full_name.split(' ')[0]}! 🛡️`);
       navigate(res.data.user.role === 'admin' ? '/admin' : '/dashboard');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Login failed.');
+      const error = err.response?.data;
+      if (error?.requiresVerification) {
+        toast.error('Please verify your email first');
+        navigate(`/register?email=${form.email}&verify=true`);
+      } else {
+        toast.error(error?.error || 'Login failed.');
+      }
     }
     setLoading(false);
   };
@@ -53,8 +60,21 @@ export function Login() {
 export function Register() {
   const [searchParams]        = useSearchParams();
   const prefilledRole         = searchParams.get('role') || 'tenant';
-  const [form, setForm]       = useState({ full_name:'', email:'', phone:'', password:'', role: ['tenant','agent','landlord'].includes(prefilledRole) ? prefilledRole : 'tenant', state:'', city:'' });
+  const prefilledEmail        = searchParams.get('email') || '';
+  const shouldShowVerify      = searchParams.get('verify') === 'true';
+  
+  const [form, setForm]       = useState({ 
+    full_name:'', 
+    email: prefilledEmail, 
+    phone:'', 
+    password:'', 
+    role: ['tenant','agent','landlord'].includes(prefilledRole) ? prefilledRole : 'tenant', 
+    state:'', 
+    city:'' 
+  });
   const [loading, setLoading] = useState(false);
+  const [showVerification, setShowVerification] = useState(shouldShowVerify);
+  const [registeredEmail, setRegisteredEmail] = useState(prefilledEmail);
   const { login }             = useAuth();
   const navigate              = useNavigate();
 
@@ -63,14 +83,42 @@ export function Register() {
     setLoading(true);
     try {
       const res = await registerUser(form);
-      login(res.data.user, res.data.token);
-      toast.success('Account created! Welcome to SouthSwift 🛡️');
-      navigate('/dashboard');
+      
+      if (res.data.requiresVerification) {
+        toast.success('Account created! Please check your email for verification code.');
+        setRegisteredEmail(form.email);
+        setShowVerification(true);
+      } else {
+        // Fallback for existing verified users
+        login(res.data.user, res.data.token);
+        toast.success('Account created! Welcome to SouthSwift 🛡️');
+        navigate('/dashboard');
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Registration failed.');
     }
     setLoading(false);
   };
+
+  const handleVerified = (user, token) => {
+    login(user, token);
+    navigate('/dashboard');
+  };
+
+  const handleBackToRegister = () => {
+    setShowVerification(false);
+    setRegisteredEmail('');
+  };
+
+  if (showVerification && registeredEmail) {
+    return (
+      <OTPVerification 
+        email={registeredEmail}
+        onVerified={handleVerified}
+        onBack={handleBackToRegister}
+      />
+    );
+  }
 
   return (
     <div style={s.wrap}>

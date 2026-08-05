@@ -145,7 +145,7 @@ export function Dashboard() {
       <div style={s.container}>
         <div style={s.header}>
           <div>
-            <h1 style={s.hTitle}>Welcome, {user?.full_name?.split(' ')[0]} 👋</h1>
+            <h1 style={s.hTitle}>Welcome, {user?.full_name?.split(' ')[0]} </h1>
             <div style={s.hSub}>
               <span style={{...s.roleBadge, background: user?.role==='agent'?'#DCFCE7':'#EFF6FF'}}>
                 {user?.role}
@@ -165,7 +165,6 @@ export function Dashboard() {
             ['⏳', deals.filter(d=>['escrow_held','docs_generated'].includes(d.status)).length, 'In Escrow'],
             ['🏠', myListings.length, 'My Listings']].map(([icon,num,label])=>(
             <div key={label} style={s.statCard}>
-              <span style={s.statIcon}>{icon}</span>
               <div style={s.statNum}>{num}</div>
               <div style={s.statLabel}>{label}</div>
             </div>

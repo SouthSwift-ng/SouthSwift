@@ -4,6 +4,7 @@ const cors         = require('cors');
 const compression  = require('compression');
 const helmet       = require('helmet');
 const { pool, initDB } = require('./config/db');
+const { initRedis } = require('./config/redis');
 
 // ── PROCESS-LEVEL SAFETY NET — a single stray async error must not kill the worker ──
 // (Node crashes on unhandledRejection by default since v15 — this keeps the service up
@@ -197,4 +198,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, async () => {
   console.log(`🛡️  SouthSwift backend running on port ${PORT}`);
   await initDB();
+  await initRedis();
 });

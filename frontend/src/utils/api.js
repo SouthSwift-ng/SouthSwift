@@ -47,6 +47,8 @@ if (process.env.NODE_ENV === 'production') {
 // ── AUTH ─────────────────────────────────────────────────────────────────────
 export const registerUser  = (data) => API.post('/auth/register', data);
 export const loginUser     = (data) => API.post('/auth/login', data);
+export const verifyOTP     = (data) => API.post('/auth/verify-otp', data);
+export const resendOTP     = (data) => API.post('/auth/resend-otp', data);
 export const getMe         = ()     => API.get('/auth/me');
 export const updateProfile = (data) => API.put('/auth/profile', data);
 
