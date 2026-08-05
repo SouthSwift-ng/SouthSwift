@@ -551,17 +551,17 @@ const raiseDispute = async (req, res) => {
         await Promise.allSettled([
           p.tenant_email && sendEmail({
             to: p.tenant_email,
-            subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Deal',
+            subject: ' SouthSwift — A Dispute Has Been Raised on Your Deal',
             html: partyBody,
           }),
           p.agent_email && sendEmail({
             to: p.agent_email,
-            subject: '⚠️ SouthSwift — A Dispute Has Been Raised on Your Listing',
+            subject: ' SouthSwift — A Dispute Has Been Raised on Your Listing',
             html: partyBody,
           }),
           sendEmail({
             to: 'ceo@southswift.com.ng',
-            subject: '⚠️ ADMIN: Deal Dispute Raised',
+            subject: ' ADMIN: Deal Dispute Raised',
             html: `<p>Deal ${escapeHtml(req.params.id)} (${escapeHtml(p.listing_title)}) has been disputed by ${escapeHtml(req.user.email)}.</p><p>Reason: ${escapeHtml(reason)}</p>`,
           }),
         ].filter(Boolean));
