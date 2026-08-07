@@ -14,7 +14,7 @@ const createTransporter = () => {
 
   // Auto-configure secure based on port
   if (config.port === 465) {
-    config.secure = true; // SSL/TLS for port 465
+    // SSL/TLS for port 465
   } else if (config.port === 587) {
     config.secure = false; // STARTTLS for port 587
     config.requireTLS = true;
