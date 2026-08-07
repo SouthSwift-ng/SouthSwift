@@ -1,17 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   getDeal, confirmMoveIn, raiseDispute, cancelDeal, sendMessage, getMessages,
   initiateDeal, verifyPayment, isPaystackCheckoutUrl,
-  createListing, getDashboard, getPendingAgents,
+  createListing, updateListing, getListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
   getAgent, submitReview, getAgentReviews, getWaitlist,
   getAllListings, deleteListingsBulk
 } from '../utils/api';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
-import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare } from 'lucide-react';
+import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare, X } from 'lucide-react';
 
 const G    = '#1B4332';
 const GOLD = '#C8963C';
@@ -370,6 +370,8 @@ export function DealDetail() {
 // ── CREATE LISTING (with Nominatim / OpenStreetMap address search) ───────────
 export function CreateListing() {
   const navigate = useNavigate();
+  const { id }   = useParams();
+  const isEdit   = Boolean(id);
   const [form, setForm] = useState({
     title: '', description: '', property_type: 'apartment',
     bedrooms: 1, bathrooms: 1, rent_price: '', rent_period: 'yearly',
@@ -377,10 +379,13 @@ export function CreateListing() {
     latitude: null, longitude: null,
     is_room_share: false, room_share_price_per_person: '', room_share_slots: 2,
   });
-  const [loading, setL]      = useState(false);
-  const [images, setImages]  = useState([]);
-  const [previews, setPreviews] = useState([]);
-  const [videos, setVideos]  = useState([]);
+  const [loading, setL]          = useState(false);
+  const [listingLoading, setListingLoading] = useState(isEdit);
+  const [notFound, setNotFound]  = useState(false);
+  // Unified media lists — existing items carry `url`, new uploads carry `file` (+`previewUrl`)
+  const [imageItems, setImageItems] = useState([]);
+  const [videoItems, setVideoItems] = useState([]);
+  const uidRef = useRef(0);
 
   // Nominatim address search
   const [addrQuery, setAddrQuery]         = useState('');
@@ -388,14 +393,61 @@ export function CreateListing() {
   const [addrSearching, setAddrSearching] = useState(false);
   const [addrTimer, setAddrTimer]         = useState(null);
 
+  // Edit mode — pre-populate every field from the existing listing
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setListingLoading(true);
+    getListing(id)
+      .then(r => {
+        if (cancelled) return;
+        const l = r.data;
+        setForm({
+          title: l.title || '', description: l.description || '', property_type: l.property_type || 'apartment',
+          bedrooms: l.bedrooms ?? 1, bathrooms: l.bathrooms ?? 1, rent_price: l.rent_price ?? '',
+          rent_period: l.rent_period || 'yearly', address: l.address || '',
+          city: l.city || '', state: l.state || '',
+          amenities: Array.isArray(l.amenities) ? l.amenities.join(', ') : (l.amenities || ''),
+          latitude: l.latitude ?? null, longitude: l.longitude ?? null,
+          is_room_share: !!l.is_room_share,
+          room_share_price_per_person: l.room_share_price_per_person ?? '',
+          room_share_slots: l.room_share_slots ?? 2,
+        });
+        setAddrQuery(l.address || '');
+        setImageItems((Array.isArray(l.images) ? l.images : []).map(url => ({ uid: ++uidRef.current, url })));
+        setVideoItems((Array.isArray(l.videos) ? l.videos : []).map(url => ({ uid: ++uidRef.current, url })));
+      })
+      .catch(() => { if (!cancelled) setNotFound(true); })
+      .finally(() => { if (!cancelled) setListingLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const removeMedia = (kind, uid) => {
+    const setItems = kind === 'image' ? setImageItems : setVideoItems;
+    setItems(prev => {
+      prev.filter(i => i.uid === uid).forEach(i => { if (i.previewUrl) URL.revokeObjectURL(i.previewUrl); });
+      return prev.filter(i => i.uid !== uid);
+    });
+  };
+
   const handleImages = (e) => {
-    const files = Array.from(e.target.files).slice(0, 6);
-    setImages(files);
-    setPreviews(files.map(f => URL.createObjectURL(f)));
+    const files = Array.from(e.target.files);
+    const slots = Math.max(6 - imageItems.length, 0);
+    const picked = files.slice(0, slots);
+    setImageItems(prev => [...prev,
+      ...picked.map(file => ({ uid: ++uidRef.current, file, previewUrl: URL.createObjectURL(file) }))]);
+    e.target.value = '';
+    if (files.length > slots) toast.error('Maximum 6 photos allowed.');
   };
 
   const handleVideos = (e) => {
-    setVideos(Array.from(e.target.files).slice(0, 3));
+    const files = Array.from(e.target.files);
+    const slots = Math.max(3 - videoItems.length, 0);
+    const picked = files.slice(0, slots);
+    setVideoItems(prev => [...prev,
+      ...picked.map(file => ({ uid: ++uidRef.current, file, previewUrl: URL.createObjectURL(file) }))]);
+    e.target.value = '';
+    if (files.length > slots) toast.error('Maximum 3 videos allowed.');
   };
 
   const handleAddrInput = (value) => {
@@ -436,31 +488,50 @@ export function CreateListing() {
 
   const submit = async (e) => {
     e.preventDefault();
+
     if (form.is_room_share && !(Number(form.room_share_price_per_person) > 0)) {
-      toast.error('Please set a price per person for the room share.');
+      toast.error('ppppPlease set a price per person for the room share.');
       return;
     }
     setL(true);
     try {
       const data = {
         ...form,
+              room_share_price_per_person:form.room_share_price_per_person == "" ? undefined : form.room_share_price_per_person,
         amenities: form.amenities ? form.amenities.split(',').map(a => a.trim()) : [],
-        images,
-        videos,
+        images: imageItems.filter(i => i.file).map(i => i.file),
+        videos: videoItems.filter(i => i.file).map(i => i.file),
       };
-      const res = await createListing(data);
-      toast.success('Listing created! 🏠');
-      navigate(`/listings/${res.data.id}`);
+      if (isEdit) {
+        // Keep-list of existing media — lets the backend merge kept + new instead of replacing all.
+        data.keep_image_urls = imageItems.filter(i => i.url).map(i => i.url);
+        data.keep_video_urls = videoItems.filter(i => i.url).map(i => i.url);
+        await updateListing(id, data);
+        toast.success('Listing updated! ');
+        navigate('/dashboard');
+      } else {
+        const res = await createListing(data);
+        toast.success('Listing created! ');
+        navigate(`/listings/${res.data.id}`);
+      }
     } catch(err) {
-      toast.error(err.response?.data?.error || 'Failed to create listing.');
+      toast.error(err.response?.data?.error || (isEdit ? 'Failed to update listing.' : 'Failed to create listing.'));
     }
     setL(false);
   };
 
+  if (listingLoading) return <div style={ps.loading}>🛡️ Loading listing...</div>;
+  if (notFound) return (
+    <div style={ps.loading}>
+      Listing not found.
+      <div><button onClick={() => navigate('/dashboard')} style={{ ...ps.confirmBtn, marginTop: 14 }}>← Back to Dashboard</button></div>
+    </div>
+  );
+
   return (
     <div style={ps.page}>
       <div style={{ ...ps.container, maxWidth: 640 }}>
-        <h1 style={ps.pageTitle}>Add New Listing</h1>
+        <h1 style={ps.pageTitle}>{isEdit ? 'Edit Listing' : 'Add New Listing'}</h1>
         <form onSubmit={submit} style={ps.form}>
 
           {/* Title */}
@@ -579,11 +650,17 @@ export function CreateListing() {
             <label style={ps.label}>Property Photos (up to 6)</label>
             <input type="file" accept="image/*" multiple onChange={handleImages}
               style={{ ...ps.input, padding: '6px' }}/>
-            {previews.length > 0 && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                {previews.map((src, i) => (
-                  <img key={i} src={src} alt=""
-                    style={{ width: 80, height: 60, objectFit: 'cover', borderRadius: 6, border: '1px solid #DDD' }}/>
+            {imageItems.length > 0 && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+                {imageItems.map(item => (
+                  <div key={item.uid} style={{ position: 'relative' }}>
+                    <img src={item.previewUrl || item.url} alt=""
+                      style={{ width: 96, height: 72, objectFit: 'cover', borderRadius: 6, border: '1px solid #DDD', display: 'block' }}/>
+                    <button type="button" onClick={() => removeMedia('image', item.uid)} aria-label="Remove photo" title="Remove photo"
+                      style={ps.removeBtn}>
+                      <X size={13} strokeWidth={3}/>
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -597,10 +674,19 @@ export function CreateListing() {
             <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
               Optional. Up to 3 short walkthrough videos (max 100MB each).
             </p>
-            {videos.length > 0 && (
-              <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#444' }}>
-                {videos.map((f, i) => <li key={i}>{f.name}</li>)}
-              </ul>
+            {videoItems.length > 0 && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+                {videoItems.map(item => (
+                  <div key={item.uid} style={{ position: 'relative' }}>
+                    <video controls preload="metadata" src={item.previewUrl || item.url}
+                      style={{ width: 220, borderRadius: 6, border: '1px solid #DDD', display: 'block', background: '#000' }}/>
+                    <button type="button" onClick={() => removeMedia('video', item.uid)} aria-label="Remove video" title="Remove video"
+                      style={ps.removeBtn}>
+                      <X size={13} strokeWidth={3}/>
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
@@ -635,7 +721,7 @@ export function CreateListing() {
           </div>
 
           <button style={{ ...ps.confirmBtn, opacity: loading ? 0.7 : 1 }} disabled={loading}>
-            {loading ? 'Creating...' : '🏠 Create Listing'}
+            {loading ? (isEdit ? 'Saving...' : 'Creating...') : (isEdit ? ' Save Changes' : ' Create Listing')}
           </button>
         </form>
       </div>
@@ -727,7 +813,7 @@ export function AdminPanel() {
 
         {tab==='dashboard' && (
           <div style={ps.statsGrid}>
-            {[['👥',stats.total_users,'Total Users'],['🏠',stats.total_listings,'Listings'],
+            {[['👥',stats.total_users,'Total Users'],['',stats.total_listings,'Listings'],
               ['✅',stats.completed_deals,'Completed Deals'],['🛡️',stats.verified_agents,'Verified Agents'],
               ['₦',formatNaira(stats.total_revenue_ngn || 0),'Total Revenue']].map(([icon,num,label])=>(
               <div key={label} style={ps.aStat}>
@@ -1019,6 +1105,9 @@ const ps = {
   actionDesc: { fontSize:12.5, color:'#166534', marginBottom:14 },
   confirmBtn: { width:'100%', background:G, color:'white', border:'none', padding:'12px',
                 borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14 },
+  removeBtn: { position:'absolute', top:-7, right:-7, width:20, height:20, padding:0, border:'none',
+               borderRadius:'50%', background:'#DC2626', color:'white', cursor:'pointer',
+               display:'flex', alignItems:'center', justifyContent:'center', lineHeight:1 },
   disputeCard:{ background:'#FFF7F7', borderRadius:12, padding:'18px 20px', border:'1px solid #FECACA' },
   textarea:   { width:'100%', border:'1px solid #FECACA', borderRadius:8, padding:'10px',
                 fontSize:13, height:80, boxSizing:'border-box', resize:'vertical', marginBottom:10 },

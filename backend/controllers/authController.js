@@ -7,6 +7,32 @@ const { redis } = require('../config/redis');
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
+// Generate a fresh OTP, store it, reset attempts, set the 5-min cooldown, and email it
+const issueOTP = async (email, userId, fullName) => {
+  const otpCode = generateOTP();
+  const otpKey = `otp:${email}`;
+  const attemptsKey = `otp_attempts:${email}`;
+
+  // Store OTP with 10 minute expiry
+  await redis.setEx(otpKey, 600, JSON.stringify({
+    otp: otpCode,
+    userId,
+    email,
+    fullName,
+    attempts: 0,
+    createdAt: new Date().toISOString()
+  }));
+
+  // Reset attempts counter
+  await redis.del(attemptsKey);
+
+  // Set 5-minute cooldown for resend
+  await redis.setEx(`otp_cooldown:${email}`, 300, '1');
+
+  // Send OTP email (non-blocking)
+  sendOTPEmail(email, fullName, otpCode);
+};
+
 // POST /api/auth/register
 const register = async (req, res) => {
   const { full_name, email, phone, password, role, state, city } = req.body;
@@ -42,25 +68,7 @@ const register = async (req, res) => {
     }
 
     // Generate and store OTP in Redis
-    const otpCode = generateOTP();
-    const otpKey = `otp:${email}`;
-    const attemptsKey = `otp_attempts:${email}`;
-    
-    // Store OTP with 10 minute expiry
-    await redis.setEx(otpKey, 600, JSON.stringify({
-      otp: otpCode,
-      userId: user.id,
-      email: email,
-      fullName: full_name,
-      attempts: 0,
-      createdAt: new Date().toISOString()
-    }));
-
-    // Reset attempts counter
-    await redis.del(attemptsKey);
-
-    // Send OTP email (non-blocking)
-    sendOTPEmail(email, full_name, otpCode);
+    await issueOTP(email, user.id, full_name);
 
     res.status(201).json({ 
       message: 'Account created successfully. Please check your email for verification code.',
@@ -97,10 +105,24 @@ const login = async (req, res) => {
 
     // Check if user is verified
     if (!user.is_verified) {
+      const cooldownKey = `otp_cooldown:${email}`;
+      const cooldownSeconds = await redis.ttl(cooldownKey);
+      let codeSent = false;
+
+      // Cooldown expired — send a fresh verification code
+      if (cooldownSeconds <= 0) {
+        await issueOTP(email, user.id, user.full_name);
+        codeSent = true;
+      }
+
       return res.status(403).json({ 
-        error: 'Please verify your email address before logging in.',
+        error: codeSent
+          ? 'A new verification code has been sent to your email.'
+          : 'Please verify your email address before logging in.',
         requiresVerification: true,
-        email: user.email
+        email: user.email,
+        codeSent,
+        cooldownSeconds: codeSent ? 300 : cooldownSeconds
       });
     }
 
@@ -247,29 +269,8 @@ const resendOTP = async (req, res) => {
       return res.status(429).json({ error: 'Please wait 5 minutes before requesting a new code.' });
     }
 
-    // Generate new OTP
-    const otpCode = generateOTP();
-    const otpKey = `otp:${email}`;
-    const attemptsKey = `otp_attempts:${email}`;
-
-    // Store new OTP with 10 minute expiry
-    await redis.setEx(otpKey, 600, JSON.stringify({
-      otp: otpCode,
-      userId: user.id,
-      email: email,
-      fullName: user.full_name,
-      attempts: 0,
-      createdAt: new Date().toISOString()
-    }));
-
-    // Set 5-minute cooldown for resend
-    await redis.setEx(cooldownKey, 300, '1');
-
-    // Reset attempts counter
-    await redis.del(attemptsKey);
-
-    // Send OTP email (non-blocking)
-    sendOTPEmail(email, user.full_name, otpCode);
+    // Generate and send a fresh OTP
+    await issueOTP(email, user.id, user.full_name);
 
     res.json({ message: 'New verification code sent to your email.' });
 

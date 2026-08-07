@@ -26,7 +26,11 @@ export function Login() {
     } catch (err) {
       const error = err.response?.data;
       if (error?.requiresVerification) {
-        toast.error('Please verify your email first');
+        if (error?.codeSent) {
+          toast.success('New verification code sent to your inbox');
+        } else {
+          toast.error(error?.error || 'Please verify your email first');
+        }
         navigate(`/register?email=${form.email}&verify=true`);
       } else {
         toast.error(error?.error || 'Login failed.');

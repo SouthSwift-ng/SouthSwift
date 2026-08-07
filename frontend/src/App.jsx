@@ -90,6 +90,9 @@ export default function App() {
             <Route path="/create-listing" element={
               <ProtectedRoute roles={['agent','admin']}><CreateListing /></ProtectedRoute>
             } />
+            <Route path="/edit-listing/:id" element={
+              <ProtectedRoute roles={['agent','admin']}><CreateListing /></ProtectedRoute>
+            } />
             <Route path="/deals/:id" element={
               <ProtectedRoute><DealDetail /></ProtectedRoute>
             } />

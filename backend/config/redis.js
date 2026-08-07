@@ -105,6 +105,23 @@ const redis = {
       memoryStore.delete(key);
     }
     return 0;
+  },
+
+  async ttl(key) {
+    if (redisClient && redisClient.isReady) {
+      try {
+        return await redisClient.ttl(key);
+      } catch (error) {
+        console.warn('Redis ttl failed, using memory:', error.message);
+      }
+    }
+
+    // Memory fallback
+    const item = memoryStore.get(key);
+    if (!item) return -2;
+
+    const remaining = Math.round((item.expires - Date.now()) / 1000);
+    return remaining > 0 ? remaining : -2;
   }
 };
 
