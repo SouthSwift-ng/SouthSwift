@@ -47,13 +47,15 @@ if (process.env.NODE_ENV === 'production') {
 // ── AUTH ─────────────────────────────────────────────────────────────────────
 export const registerUser  = (data) => API.post('/auth/register', data);
 export const loginUser     = (data) => API.post('/auth/login', data);
+export const verifyOTP     = (data) => API.post('/auth/verify-otp', data);
+export const resendOTP     = (data) => API.post('/auth/resend-otp', data);
 export const getMe         = ()     => API.get('/auth/me');
 export const updateProfile = (data) => API.put('/auth/profile', data);
 
 // ── LISTINGS ─────────────────────────────────────────────────────────────────
 export const getListings    = (params) => API.get('/listings', { params });
 export const getListing     = (id)     => API.get(`/listings/${id}`);
-export const createListing  = (data)   => {
+const listingFormData = (data) => {
   const fd = new FormData();
   Object.entries(data).forEach(([k, v]) => {
     if (k === 'images') {
@@ -68,12 +70,22 @@ export const createListing  = (data)   => {
       fd.append(k, v);
     }
   });
+  return fd;
+};
+export const createListing  = (data)   => {
+  const fd = listingFormData(data);
   return API.post('/listings', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 180000, // 180s — videos can be large on slow connections
   });
 };
-export const updateListing      = (id, data) => API.put(`/listings/${id}`, data);
+export const updateListing      = (id, data) => {
+  const fd = listingFormData(data);
+  return API.put(`/listings/${id}`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  });
+};
 export const deleteListing      = (id)        => API.delete(`/listings/${id}`);
 export const getMyListings      = ()           => API.get('/listings/agent/my');
 export const getRoomShareStatus = (listingId)  => API.get(`/listings/${listingId}/room-share-status`);

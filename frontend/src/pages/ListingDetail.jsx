@@ -561,7 +561,7 @@ const s = {
   container:   { maxWidth:1100, margin:'0 auto', padding:'28px 20px' },
   loading:     { textAlign:'center', padding:80, fontSize:16, color:G },
   gallery:     { borderRadius:16, overflow:'hidden', marginBottom:28, position:'relative' },
-  mainImg:     { width:'100%', height:420, objectFit:'cover', display:'block' },
+  mainImg:     { width:'100%', height:420, objectFit:'contain', display:'block' },
   shieldBadge: { position:'absolute', top:16, left:16, background:G, color:'white',
                  fontSize:12, fontWeight:700, padding:'6px 14px', borderRadius:20,
                  display:'flex', alignItems:'center', gap:6 },

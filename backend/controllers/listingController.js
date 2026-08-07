@@ -189,9 +189,22 @@ const createListing = async (req, res) => {
 
 // PUT /api/listings/:id
 const updateListing = async (req, res) => {
-  if (req.body.amenities !== undefined)
-    req.body.amenities = sanitizeAmenities(req.body.amenities);
+  // Multipart (FormData) bodies arrive as strings — normalise before validation.
+  const coerce = (v) => {
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    return v;
+  };
+  req.body = Object.fromEntries(Object.entries(req.body).map(([k, v]) => [k, coerce(v)]));
 
+  if (req.body.amenities !== undefined || req.body['amenities[]'] !== undefined)
+    req.body.amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
+
+  if (req.body.is_room_share !== undefined)
+    req.body.is_room_share = req.body.is_room_share === true || req.body.is_room_share === 'true';
+
+  ['rent_price', 'bedrooms', 'bathrooms', 'room_share_slots', 'latitude', 'longitude']
+    .forEach(k => { if (req.body[k] !== undefined) req.body[k] = Number(req.body[k]); });
   if (req.body.room_share_price_per_person !== undefined &&
       !(Number(req.body.room_share_price_per_person) > 0))
     return res.status(400).json({ error: 'Price per person must be greater than zero.' });
@@ -243,8 +256,27 @@ const updateListing = async (req, res) => {
     return res.status(500).json({ error: 'Could not validate listing.' });
   }
 
-  const fields = ['title','description','rent_price','bedrooms','bathrooms','address','city','state','is_available','amenities',
-                  'is_room_share','room_share_price_per_person','room_share_slots'];
+  const fields = ['title','description','rent_price','bedrooms','bathrooms','address','city','state','is_available',
+                  'property_type','rent_period','amenities',
+                  'is_room_share','room_share_price_per_person','room_share_slots','latitude','longitude',
+                  'images','videos'];
+
+  // Media merge — kept existing URLs (sent by the edit form) + any newly uploaded files.
+  // If neither keep-list nor new uploads arrive for a type, its column is left untouched.
+  const parseUrlList = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string' && v.length) {
+      try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
+    }
+    return null;
+  };
+  const keptImages = parseUrlList(req.body.keep_image_urls);
+  const keptVideos = parseUrlList(req.body.keep_video_urls);
+  if (keptImages !== null || req.files?.images?.length)
+    req.body.images = [...(keptImages ?? []), ...(req.files?.images?.map(f => f.path) ?? [])];
+  if (keptVideos !== null || req.files?.videos?.length)
+    req.body.videos = [...(keptVideos ?? []), ...(req.files?.videos?.map(f => f.path) ?? [])];
+
   const updates = []; const params = [];
   let idx = 1;
   fields.forEach(f => {

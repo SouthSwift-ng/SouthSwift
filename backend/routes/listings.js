@@ -27,7 +27,20 @@ router.post('/', protect, agentOnly, (req, res, next) => {
     return res.status(400).json({ error: `Upload failed: ${msg}` });
   });
 }, createListing);
-router.put('/:id',           protect, agentOnly, updateListing);
+router.put('/:id',           protect, agentOnly, (req, res, next) => {
+  uploadListingMedia(req, res, (err) => {
+    if (!err) return next();
+    console.error('Listing media upload failed:', err.code || err.name || '', err.message || err);
+    if (err.code === 'LIMIT_FILE_SIZE')
+      return res.status(400).json({ error: 'File too large (max 100MB per video, 10MB per photo).' });
+    if (err.code === 'LIMIT_UNEXPECTED_FILE')
+      return res.status(400).json({ error: 'Too many files. Max 6 photos and 3 videos per listing.' });
+    if (err.message && /Only (image|video) files/.test(err.message))
+      return res.status(400).json({ error: err.message });
+    const msg = String(err.message || 'Upload failed.').split('\n')[0].slice(0, 200);
+    return res.status(400).json({ error: `Upload failed: ${msg}` });
+  });
+}, updateListing);
 router.delete('/:id',        protect, agentOnly, deleteListing);
 
 module.exports = router;

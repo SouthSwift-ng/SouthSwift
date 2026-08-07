@@ -1,12 +1,21 @@
+
+require('dotenv').config();
+
 const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
   max:                     10,
   connectionTimeoutMillis: 10000, // fail fast instead of hanging the worker if the DB is unreachable
   idleTimeoutMillis:       30000,
 });
+
+(async () => {
+  const res = await pool.query('SELECT NOW()');
+  console.log(res.rows);
+})();
+
 
 // An idle client dropped by the DB (routine on Render/Supabase) emits 'error' on the pool;
 // unhandled, that event crashes the whole process. Log and recover instead.
@@ -351,6 +360,7 @@ const initDB = async () => {
       ALTER TABLE public.reviews            ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.agent_profiles     ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.waitlist           ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.otp_verifications  ENABLE ROW LEVEL SECURITY;
     `);
 
     // Create performance indexes

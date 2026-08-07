@@ -273,7 +273,6 @@ export default function LandingPage() {
               { num:'04', icon:'💳', title:'Release',  sub:'Funds released to landlord' },
             ].map((step,i) => (
               <div key={i} style={s.escrowStep}>
-                <div style={s.escrowStepIcon}>{step.icon}</div>
                 <div style={s.escrowStepNum}>{step.num}. {step.title}</div>
                 <div style={s.escrowStepSub}>{step.sub}</div>
                 {i < 3 && <div style={s.escrowConnector} />}
@@ -296,7 +295,6 @@ export default function LandingPage() {
               { step:'4', title:'Get Your SwiftDoc Agreement', body:'A legally-binding AI-generated tenancy agreement is emailed to both parties automatically.', icon:'📋' },
             ].map((item,i) => (
               <div key={i} style={s.howCard}>
-                <div style={s.howIcon}>{item.icon}</div>
                 <div style={s.howStep}>Step {item.step}</div>
                 <div style={s.howTitle}>{item.title}</div>
                 <div style={s.howBody}>{item.body}</div>
@@ -355,7 +353,6 @@ export default function LandingPage() {
               { icon:'⚖️', title:'Legal Peace of Mind', body:'Professional tenancy agreements included with every deal.' },
             ].map(p => (
               <div key={p.title} style={s.uniPoint}>
-                <span style={{ fontSize:22 }}>{p.icon}</span>
                 <div>
                   <div style={s.uniPointTitle}>{p.title}</div>
                   <div style={s.uniPointBody}>{p.body}</div>

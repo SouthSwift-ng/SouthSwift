@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, updateListing, deleteListing, getBanks, resolveAccount } from '../utils/api';
+import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, deleteListing, getBanks, resolveAccount } from '../utils/api';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
@@ -22,57 +22,44 @@ export function Dashboard() {
   const [verDocs, setVerDocs] = useState({ id_document: null, selfie: null });
   const [introVideo, setIntroVideo] = useState(null);
   const [introUploading, setIntroUploading] = useState(false);
-  const [editingListingId, setEditingListingId] = useState(null);
-  const [editForm, setEditForm] = useState({ title:'', rent_price:'', is_available:true });
-  const [savingEdit, setSavingEdit] = useState(false);
   const [banks, setBanks] = useState([]);
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const startEdit = (l) => {
-    setEditingListingId(l.id);
-    setEditForm({ title: l.title, rent_price: l.rent_price, is_available: l.is_available });
+  const requestDelete = (l) => setDeleteTarget(l);
+
+  const cancelDelete = () => {
+    if (deleting) return;
+    setDeleteTarget(null);
   };
 
-  const cancelEdit = () => { setEditingListingId(null); setSavingEdit(false); };
-
-  const saveEdit = async () => {
-    if (!editForm.title.trim()) { toast.error('Title cannot be empty.'); return; }
-    const price = Number(editForm.rent_price);
-    if (!Number.isFinite(price) || price <= 0) { toast.error('Enter a valid rent price.'); return; }
-    setSavingEdit(true);
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
     try {
-      await updateListing(editingListingId, {
-        title: editForm.title.trim(),
-        rent_price: price,
-        is_available: editForm.is_available,
-      });
-      toast.success('Listing updated.');
-      await refreshMyListings();
-      cancelEdit();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to update listing.');
-      setSavingEdit(false);
-    }
-  };
-
-  const handleDelete = async (l) => {
-    if (!window.confirm(`Delete "${l.title}"? This cannot be undone.`)) return;
-    try {
-      await deleteListing(l.id);
+      await deleteListing(deleteTarget.id);
       toast.success('Listing deleted.');
+      setDeleteTarget(null);
       await refreshMyListings();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to delete listing.');
     }
+    setDeleting(false);
   };
+
+  // Close the delete modal on Escape
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const onKey = (e) => { if (e.key === 'Escape') cancelDelete(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteTarget, deleting]);
 
   const refreshMyListings = () =>
     getMyListings().then(r => {
       setMyListings(r.data);
-      // If the listing being edited no longer exists (deleted elsewhere), drop the
-      // stale edit panel so Save doesn't 404 against a dead id.
-      setEditingListingId(prev => prev && !r.data.some(l => l.id === prev) ? null : prev);
     }).catch(()=>{});
 
   useEffect(() => {
@@ -145,7 +132,7 @@ export function Dashboard() {
       <div style={s.container}>
         <div style={s.header}>
           <div>
-            <h1 style={s.hTitle}>Welcome, {user?.full_name?.split(' ')[0]} 👋</h1>
+            <h1 style={s.hTitle}>Welcome, {user?.full_name?.split(' ')[0]} </h1>
             <div style={s.hSub}>
               <span style={{...s.roleBadge, background: user?.role==='agent'?'#DCFCE7':'#EFF6FF'}}>
                 {user?.role}
@@ -165,7 +152,6 @@ export function Dashboard() {
             ['⏳', deals.filter(d=>['escrow_held','docs_generated'].includes(d.status)).length, 'In Escrow'],
             ['🏠', myListings.length, 'My Listings']].map(([icon,num,label])=>(
             <div key={label} style={s.statCard}>
-              <span style={s.statIcon}>{icon}</span>
               <div style={s.statNum}>{num}</div>
               <div style={s.statLabel}>{label}</div>
             </div>
@@ -221,42 +207,15 @@ export function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  {editingListingId === l.id ? (
-                    <div style={s.editPanel}>
-                      <label style={s.label}>Title</label>
-                      <input style={s.input} type="text" value={editForm.title}
-                        onChange={e => setEditForm(f => ({...f, title: e.target.value}))} />
-                      <label style={s.label}>Rent Price (₦)</label>
-                      <input style={s.input} type="number" min="1" value={editForm.rent_price}
-                        onChange={e => setEditForm(f => ({...f, rent_price: e.target.value}))} />
-                      <label style={{...s.label, display:'flex', alignItems:'center', gap:8, marginTop:14}}>
-                        <input type="checkbox" checked={editForm.is_available}
-                          onChange={e => setEditForm(f => ({...f, is_available: e.target.checked}))} />
-                        Mark as available (uncheck if rented out)
-                      </label>
-                      <div style={{display:'flex', gap:8, marginTop:14}}>
-                        <button onClick={cancelEdit} disabled={savingEdit}
-                          style={{flex:1, background:'#F3F4F6', color:'#444', border:'none', padding:'10px',
-                                  borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:13}}>Cancel</button>
-                        <button onClick={saveEdit} disabled={savingEdit}
-                          style={{flex:1, background:G, color:'white', border:'none', padding:'10px',
-                                  borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:13,
-                                  opacity: savingEdit ? 0.6 : 1}}>
-                          {savingEdit ? 'Saving…' : 'Save Changes'}
-                        </button>
-                      </div>
+                  <div style={s.rowActions}>
+                      <Link to={`/edit-listing/${l.id}`} style={s.editBtn}>Edit</Link>
+                      <button onClick={() => requestDelete(l)} style={s.deleteBtn}>Delete</button>
                     </div>
-                  ) : (
-                    <div style={s.rowActions}>
-                      <button onClick={() => startEdit(l)} style={s.editBtn}>Edit</button>
-                      <button onClick={() => handleDelete(l)} style={s.deleteBtn}>Delete</button>
-                    </div>
-                  )}
-                </div>
-              ))
-            }
-          </div>
-        )}
+                  </div>
+                ))
+              }
+            </div>
+          )}
 
         {/* Verification */}
         {tab==='verification' && user?.role==='agent' && (
@@ -333,6 +292,25 @@ export function Dashboard() {
           </>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div style={s.modalOverlay} onClick={cancelDelete}>
+          <div style={s.modalCard} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Delete listing">
+            <button onClick={cancelDelete} aria-label="Close" style={s.modalClose}>✕</button>
+            <h3 style={s.modalTitle}>Delete this listing?</h3>
+            <p style={s.modalText}>
+              <strong>"{deleteTarget.title}"</strong> will be permanently removed. This action cannot be undone.
+            </p>
+            <div style={s.modalActions}>
+              <button onClick={cancelDelete} disabled={deleting} style={s.modalCancel}>Cancel</button>
+              <button onClick={confirmDelete} disabled={deleting} style={{...s.modalDelete, opacity: deleting ? 0.6 : 1}}>
+                {deleting ? 'Deleting…' : 'Delete Listing'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -373,9 +351,26 @@ const s = {
   verBtn:    { background:G, color:'white', border:'none', padding:'11px 24px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14, marginTop:14 },
   listingCard:{ background:'white', borderRadius:10, marginBottom:10, border:'1px solid #E5E7EB', overflow:'hidden' },
   rowActions:{ display:'flex', gap:8, padding:'10px 16px', borderTop:'1px solid #F3F4F6', background:'#FAFAFA' },
-  editBtn:   { flex:1, background:'#F0F9F0', color:G, border:`1px solid ${G}`, padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
+  editBtn:   { flex:1, display:'block', textAlign:'center', textDecoration:'none', background:'#F0F9F0', color:G, border:`1px solid ${G}`, padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
   deleteBtn: { flex:1, background:'#FEE2E2', color:'#DC2626', border:'1px solid #FECACA', padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
-  editPanel: { padding:'16px', borderTop:'1px solid #F3F4F6', background:'#F8FAF8' },
+  modalOverlay:{ position:'fixed', inset:0, background:'rgba(15,23,42,0.55)', zIndex:1000,
+                 display:'flex', alignItems:'center', justifyContent:'center', padding:20 },
+  modalCard: { background:'white', borderRadius:16, maxWidth:420, width:'100%',
+               padding:'32px 28px 24px', position:'relative', textAlign:'center',
+               boxShadow:'0 20px 60px rgba(0,0,0,0.25)' },
+  modalClose:{ position:'absolute', top:12, right:12, background:'#F3F4F6', border:'none',
+               width:30, height:30, borderRadius:'50%', cursor:'pointer', color:'#6B7280',
+               fontSize:13, fontWeight:700, lineHeight:1 },
+  modalIcon: { width:56, height:56, borderRadius:'50%', background:'#FEF2F2',
+               display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px',
+               border:'1px solid #FECACA' },
+  modalTitle:{ fontSize:19, fontWeight:800, color:'#111', margin:'0 0 8px' },
+  modalText: { fontSize:14, color:'#6B7280', lineHeight:1.5, margin:'0 0 24px' },
+  modalActions:{ display:'flex', gap:10 },
+  modalCancel:{ flex:1, background:'#F3F4F6', color:'#444', border:'none', padding:'11px',
+                borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14 },
+  modalDelete:{ flex:1, background:'#DC2626', color:'white', border:'none', padding:'11px',
+                borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14 },
 };
 
 export default Dashboard;
