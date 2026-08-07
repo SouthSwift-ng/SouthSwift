@@ -12,7 +12,7 @@ const initRedis = async () => {
           return null;
         }
         if (options.total_retry_time > 1000 * 60 * 60) {
-          console.warn('⚠️  Redis retry time exhausted. Using memory fallback.');
+          // console.warn('⚠️  Redis retry time exhausted. Using memory fallback.');
           return null;
         }
         return Math.min(options.attempt * 100, 3000);

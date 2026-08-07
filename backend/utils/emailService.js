@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { sendEmail }         = require('../controllers/emailController');
 
 // Create transporter with flexible configuration
 const createTransporter = () => {
@@ -14,7 +15,7 @@ const createTransporter = () => {
 
   // Auto-configure secure based on port
   if (config.port === 465) {
-    config.secure = true; // SSL/TLS for port 465
+    // SSL/TLS for port 465
   } else if (config.port === 587) {
     config.secure = false; // STARTTLS for port 587
     config.requireTLS = true;
@@ -434,7 +435,7 @@ const sendOTPEmail = (userEmail, fullName, otpCode) => {
       html: emailTemplate.html,
     };
 
-    transporter.sendMail(mailOptions)
+    sendEmail(mailOptions)
       .then(info => console.log(`✅ OTP email sent to ${userEmail}:`, info.messageId))
       .catch(error => console.error(`❌ Failed to send OTP email to ${userEmail}:`, error.message));
   });
