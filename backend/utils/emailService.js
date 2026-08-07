@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { sendEmail }         = require('../controllers/emailController');
 
 // Create transporter with flexible configuration
 const createTransporter = () => {
@@ -434,7 +435,7 @@ const sendOTPEmail = (userEmail, fullName, otpCode) => {
       html: emailTemplate.html,
     };
 
-    transporter.sendMail(mailOptions)
+    sendEmail(mailOptions)
       .then(info => console.log(`✅ OTP email sent to ${userEmail}:`, info.messageId))
       .catch(error => console.error(`❌ Failed to send OTP email to ${userEmail}:`, error.message));
   });

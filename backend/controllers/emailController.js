@@ -24,7 +24,7 @@ if (RESEND_API_KEY) {
   console.warn('⚠️  Email not configured — set RESEND_API_KEY (or EMAIL_PASS) on Render.');
 }
 
-const sendEmail = async ({ to, subject, html, text }) => {
+const sendEmail = async ({ to, subject, html, text,from }) => {
   if (!RESEND_API_KEY) {
     console.error('❌ Email send error: RESEND_API_KEY not configured');
     return { ok: false, error: 'Email not configured' };
@@ -38,7 +38,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
   }
   try {
     await axios.post('https://api.resend.com/emails', {
-      from:    EMAIL_FROM,
+      from: from ||   EMAIL_FROM,
       to:      [to],
       subject,
       html:    html || `<p>${text}</p>`,
