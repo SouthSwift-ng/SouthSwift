@@ -412,6 +412,7 @@ export function CreateListing() {
           is_room_share: !!l.is_room_share,
           room_share_price_per_person: l.room_share_price_per_person ?? '',
           room_share_slots: l.room_share_slots ?? 2,
+          is_available: l.is_available,
         });
         setAddrQuery(l.address || '');
         setImageItems((Array.isArray(l.images) ? l.images : []).map(url => ({ uid: ++uidRef.current, url })));
@@ -490,7 +491,7 @@ export function CreateListing() {
     e.preventDefault();
 
     if (form.is_room_share && !(Number(form.room_share_price_per_person) > 0)) {
-      toast.error('ppppPlease set a price per person for the room share.');
+      toast.error('Please set a price per person for the room share.');
       return;
     }
     setL(true);
@@ -564,7 +565,7 @@ export function CreateListing() {
             )}
             {form.latitude && (
               <span style={{ fontSize: 11, color: '#22C55E', marginTop: 4, display: 'block' }}>
-                ✓ Location pinned ({form.latitude.toFixed(4)}, {form.longitude.toFixed(4)})
+                ✓ Location pinned ({Number(form.latitude).toFixed(4)}, {Number(form.longitude).toFixed(4)})
               </span>
             )}
           </div>
@@ -719,6 +720,13 @@ export function CreateListing() {
               <option value="monthly">Monthly</option>
             </select>
           </div>
+
+          <span style={{"display":"flex","align-items":"center", gap:"12px",margin: "20px 0"}}>
+            <input style={{ ...ps.input, "margin": "0", width: "auto" }} 
+              checked={form.is_available}
+              onChange={e => setForm(f => ({ ...f, is_available: e.target.checked }))} type='checkbox'/> <label style={{...ps.label,"margin":"0"}}>Mark as available</label>
+          
+          </span> 
 
           <button style={{ ...ps.confirmBtn, opacity: loading ? 0.7 : 1 }} disabled={loading}>
             {loading ? (isEdit ? 'Saving...' : 'Creating...') : (isEdit ? ' Save Changes' : ' Create Listing')}
