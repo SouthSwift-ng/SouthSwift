@@ -103,7 +103,8 @@ const uploadReceipt = multer({
   storage: receiptStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if(req.file.size >  10 * 1024 * 1024) return  cb(new Error('File must be less than 10mb '), false)
+    console.log(req.file,file,{req})
+    // if(req.file.size >  10 * 1024 * 1024) return  cb(new Error('File must be less than 10mb '), false)
     if (/^(image\/(jpeg|jpg|png)|application\/pdf)$/.test(file.mimetype)) cb(null, true);
     else cb(new Error('Only image files (jpg, png) and PDFs are allowed for receipts.'), false);
   },

@@ -1,5 +1,7 @@
 const nodemailer = require('nodemailer');
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.EMAIL_PASS;
+
 // Create transporter with flexible configuration
 const createTransporter = () => {
   const config = {
@@ -424,7 +426,6 @@ const getOTPEmailTemplate = (fullName, otpCode) => {
 const sendOTPEmail = (userEmail, fullName, otpCode) => {
   // Fire and forget - completely non-blocking
   setImmediate(() => {
-    const transporter = createTransporter();
     const emailTemplate = getOTPEmailTemplate(fullName, otpCode);
     
     const mailOptions = {
@@ -469,11 +470,49 @@ const handleEmail = ({to,subject,html,from}) => {
       subject,
       html
     };
-
+RESEND_API_KEY ? sendWithResend(mailOptions) :
     transporter.sendMail(mailOptions)
       .then(info => console.log(`Email sent to ${to}:`, info.messageId))
       .catch(error => console.error(` Failed to send  email to ${to}:`, error.message));
   });
+};
+
+const sendWithResend=  async ({ to, subject, html, text,from }) => {
+  if (!RESEND_API_KEY) {
+    console.error('❌ Email send error: RESEND_API_KEY not configured');
+    return { ok: false, error: 'Email not configured' };
+  }
+  if (!html && !text) {
+    // Every current call site always passes html — this guards a future caller that
+    // forgets to, which previously rendered the literal string "<p>undefined</p>" as
+    // the entire email body and reported success.
+    console.error('❌ Email send error: no html or text content provided');
+    return { ok: false, error: 'No email content provided' };
+  }
+  try {
+    await axios.post('https://api.resend.com/emails', {
+      from: from ||   EMAIL_FROM,
+      to:      [to],
+      subject,
+      html:    html || `<p>${text}</p>`,
+    }, {
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+    console.log(`✅ Email sent to ${to}`);
+    return { ok: true };
+  } catch (err) {
+    // Resend returns a structured { message } on 4xx/5xx — surface that over the
+    // generic axios error text so a bad API key or unverified domain is obvious.
+    const msg = err.response?.data?.message || err.message;
+    console.error('❌ Email send error:', msg);
+    // Don't throw — email failure should not break the main flow — but report it
+    // so callers can record the failure instead of it disappearing silently.
+    return { ok: false, error: msg };
+  }
 };
 
 module.exports = {
