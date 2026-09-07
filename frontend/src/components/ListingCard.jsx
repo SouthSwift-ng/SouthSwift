@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import ShareListing from './ShareListing';
 import { Shield, MapPin, Bed, Bath, CheckCircle } from 'lucide-react';
 
 const G    = '#1B4332';
@@ -43,6 +44,9 @@ export default function ListingCard({ listing, distanceKm }) {
             👥 Room Share · {room_share_slots_filled || 0}/{room_share_slots} slots
           </div>
         )}
+        <div style={s.shareWrap} onClick={e => { e.preventDefault(); e.stopPropagation(); }}>
+          <ShareListing listing={listing} variant="icon" />
+        </div>
       </div>
 
       {/* Body */}
@@ -89,6 +93,7 @@ const s = {
               color:'white', fontSize:10, padding:'3px 8px', borderRadius:10 },
   roomShareBadge: { position:'absolute', bottom:10, left:10, background:GOLD, color:'white',
                     fontSize:10, fontWeight:700, padding:'3px 10px', borderRadius:10 },
+  shareWrap: { position:'absolute', bottom:8, right:8 },
   distanceBadge: { fontSize:11, color:G, fontWeight:700, marginTop:2, marginBottom:4 },
   body:     { padding:'14px 16px' },
   price:    { fontSize:20, fontWeight:800, color:G, marginBottom:2 },

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, deleteListing, getBanks, resolveAccount } from '../utils/api';
+import ShareListing from '../components/ShareListing';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
@@ -208,6 +209,7 @@ export function Dashboard() {
                     </div>
                   </div>
                   <div style={s.rowActions}>
+                      <ShareListing listing={l} />
                       <Link to={`/edit-listing/${l.id}`} style={s.editBtn}>Edit</Link>
                       <button onClick={() => requestDelete(l)} style={s.deleteBtn}>Delete</button>
                     </div>

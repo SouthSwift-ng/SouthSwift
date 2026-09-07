@@ -1,6 +1,7 @@
 const { pool } = require('../config/db');
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
+const { notifyNewListing } = require('../utils/autoShare');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -174,6 +175,9 @@ const createListing = async (req, res) => {
        address, city, state, amenities, images, videos, latitude||null, longitude||null,
        is_room_share, room_share_price_per_person, room_share_slots]
     );
+    // Phase 2 auto-share (mocked until creds exist) — fire-and-forget so a
+    // social API outage can never block or fail listing creation.
+    notifyNewListing(result.rows[0], req).catch(() => {});
     res.status(201).json(result.rows[0]);
   } catch (err) {
     // Surface specific DB errors (CHECK constraint, type mismatch, etc.) so the agent

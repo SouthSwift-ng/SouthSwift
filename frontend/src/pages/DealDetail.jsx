@@ -98,7 +98,7 @@ export function DealDetail() {
   const [myTxn, setMyTxn]         = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [proof, setProof] = useState({
-    amount_naira:      deal?.total_paid ? String(deal.total_paid) : '',
+    amount_naira:      deal?.rent_amount ? String(deal.rent_amount * (Number(deal.lease_duration_months)/12)) : '',
     payer_bank:        '',
     transfer_reference:'',
     transfer_date:     '',
@@ -124,7 +124,7 @@ export function DealDetail() {
     getCompanyAccount().then(r => setAccount(r.data)).catch(() => {});
     getNigerianBanks().then(r => setBanks(r.data.banks || [])).catch(() => {});
     getMyTransaction(deal.id).then(r => setMyTxn(r.data.transaction)).catch(() => {});
-    setProof(p => ({ ...p, amount_naira: String(deal.total_paid) }));
+    setProof(p => ({ ...p, amount_naira: String(deal.rent_amount * (Number(deal.lease_duration_months)/12)) }));
   }, [deal, user]);
 
   // Returning from Paystack — the callback appends ?reference=...&trxref=...
@@ -293,7 +293,7 @@ export function DealDetail() {
           <div style={ps.left}>
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
-              {[['Rent Amount',`₦${formatNaira(deal.rent_amount)}`],
+              {[['Rent Amount',`₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`],
                 // ['SwiftShield Fee — Tenant (2.5%)',`₦${formatNaira(deal.service_fee_tenant)}`],
                 // ['SwiftShield Fee — Landlord (2.5%)',`₦${formatNaira(deal.service_fee_landlord)}`],
                 // ['Total Platform Fee (5%)',`₦${formatNaira(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord))}`],
@@ -365,7 +365,7 @@ export function DealDetail() {
                 ) : (
                   <div style={ps.actionCard}>
                     <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
-                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.total_paid)} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
+                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
                     {account ? (
                       <div style={{background:'#fff', borderRadius:10, padding:'14px 16px', border:'1px solid #BBF7D0', marginBottom:14}}>
                         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
@@ -405,7 +405,7 @@ export function DealDetail() {
                   <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
                   <p style={ps.actionDesc}>Pay securely via Paystack. Your rent stays in SwiftShield escrow and is only released when you confirm move-in.</p>
                   <button onClick={handlePayNow} disabled={paying} style={{...ps.confirmBtn, opacity: paying ? 0.7 : 1}}>
-                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.total_paid)}`}
+                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`}
                   </button>
                 </div>
               )

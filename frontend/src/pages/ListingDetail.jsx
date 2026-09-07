@@ -7,6 +7,7 @@ import L from 'leaflet';
 import { getListing, initiateDeal, getRoomShareStatus, isPaystackCheckoutUrl } from '../utils/api';
 import { formatNaira, todayLocalISO } from '../utils/format';
 import { useAuth } from '../App';
+import ShareListing from '../components/ShareListing';
 import { Shield, MapPin, Bed, Bath, CheckCircle, Home, Star } from 'lucide-react';
 
 const G    = '#1B4332';
@@ -271,9 +272,12 @@ export default function ListingDetail() {
           <div style={s.left}>
             {/* Title */}
             <div style={s.titleCard}>
-              <div style={s.priceRow}>
-                <span style={s.price}>&#8358;{formatNaira(listing.rent_price)}</span>
-                <span style={s.period}>/{listing.rent_period==='monthly'?'month':'year'}</span>
+              <div style={{...s.priceRow, justifyContent:'space-between', alignItems:'center'}}>
+                <span>
+                  <span style={s.price}>&#8358;{formatNaira(listing.rent_price)}</span>
+                  <span style={s.period}>/{listing.rent_period==='monthly'?'month':'year'}</span>
+                </span>
+                <ShareListing listing={listing} />
               </div>
               <h1 style={s.title}>{listing.title}</h1>
               <div style={s.locationRow}><MapPin size={14} color={GOLD}/><span>{listing.address}, {listing.city}, {listing.state}</span></div>
@@ -373,7 +377,7 @@ export default function ListingDetail() {
 
               {(() => {
                 const rent = dealRent;
-                const total = rent + Math.round(rent * 0.025);
+                const total = rent * (Number(form.lease_duration_months)/12);
                 const stepIdx = ['booking','swiftdoc','swiftcounsel'].indexOf(step);
 
                 return (
@@ -410,7 +414,7 @@ export default function ListingDetail() {
                         <select style={{...s.input, borderColor: formErrors.lease_duration_months ? '#DC2626' : '#DDD'}} value={form.lease_duration_months}
                           onChange={e => { setForm(f=>({...f,lease_duration_months:Number(e.target.value)})); setFormErrors(fe=>({...fe,lease_duration_months:''})); }}>
                           <option value="">Select duration</option>
-                          {[6,12,18,24].map(m=><option key={m} value={m}>{m} months</option>)}
+                          {[6,12].map(m=><option key={m} value={m}>{m} months</option>)}
                         </select>
                         {formErrors.lease_duration_months && <span style={s.fieldError}>{formErrors.lease_duration_months}</span>}
                         <button onClick={handleContinueToSwiftDoc} disabled={dealBlocked||!form.move_in_date||!form.lease_duration_months}
@@ -476,7 +480,7 @@ export default function ListingDetail() {
                         </p>
                         <div style={s.legalBox}>
                           <p style={s.legalP}>
-                            <strong>Lease:</strong> {form.lease_duration_months}-month tenancy starting {form.move_in_date || '—'}, at ₦{rent.toLocaleString()}/{listing.rent_period==='monthly'?'month':'year'}.
+                            <strong>Lease:</strong> {form.lease_duration_months}-month tenancy starting {form.move_in_date || '—'}, at ₦{(rent * (Number(form.lease_duration_months)/12)).toLocaleString()}/{listing.rent_period==='monthly'?'month':'year'}.
                           </p>
                           <p style={s.legalP}>
                             <strong>Escrow:</strong> Your full payment is held by SouthSwift SwiftShield until you confirm move-in. Funds are only released to the landlord after you confirm satisfactory move-in within the agreed window.
@@ -484,9 +488,9 @@ export default function ListingDetail() {
                           <p style={s.legalP}>
                             <strong>Refund:</strong> If the landlord fails to deliver the property in the condition advertised, you can raise a dispute and request a refund within 14 days.
                           </p>
-                          <p style={s.legalP}>
+                          {/* <p style={s.legalP}>
                             <strong>Platform fee:</strong> 5% total (2.5% tenant + 2.5% landlord). Non-refundable once escrow is held.
-                          </p>
+                          </p> */}
                         </div>
 
                         <label style={s.legalCheck}>

@@ -29,6 +29,7 @@ const reviewRoutes  = require('./routes/reviews');
 const waitlistRoutes= require('./routes/waitlist');
 const clientFunnelRoutes = require('./routes/clientFunnel');
 const feedbackRoutes = require('./routes/feedback');
+const shareRoutes = require('./routes/share');
 
 const rateLimit = require('express-rate-limit');
 
@@ -187,6 +188,7 @@ app.use('/api/reviews',  reviewRoutes);
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/client-funnel', clientFunnelRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/share', shareRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
