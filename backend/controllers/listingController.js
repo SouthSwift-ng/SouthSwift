@@ -1,7 +1,78 @@
 const { pool } = require('../config/db');
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
+const jwt = require('jsonwebtoken');
 const { notifyNewListing } = require('../utils/autoShare');
+const {
+  AGENT_FEE_PERCENT,
+  SOUTHSWIFT_FEE_PERCENT,
+  TOTAL_FEE_PERCENT,
+  totalPayableForRent,
+} = require('../utils/money');
+
+// ── FEE HELPERS (backend is source of truth; tenants never see the split) ──
+
+// Derived tenant total for display: base rent + tenant-side fee.
+// rent_price stays the base (800k); total_payable (820k) is computed, never stored.
+const withDerivedTotals = (row) => {
+  if (!row || typeof row !== 'object') return row;
+  const tenantPct = row.southswift_fee_percent != null
+    ? Number(row.southswift_fee_percent)
+    : SOUTHSWIFT_FEE_PERCENT;
+  const total_payable = totalPayableForRent(row.rent_price, tenantPct);
+  const out = { ...row, total_payable };
+  if (row.is_room_share && row.room_share_price_per_person != null) {
+    out.room_share_total_per_person = totalPayableForRent(row.room_share_price_per_person, tenantPct);
+  }
+  return out;
+};
+
+const FEE_COLS = ['agent_fee_percent', 'southswift_fee_percent', 'total_fee_percent'];
+
+// Public readers get base price + derived total only. Full split is agent/admin-only.
+const sanitizeListingForRole = (row, user) => {
+  const withTotals = withDerivedTotals(row);
+  const isStaff = user && ['agent', 'admin'].includes(user.role);
+  const isOwner = isStaff && user.id && row.agent_id && String(user.id) === String(row.agent_id);
+  const canSeeSplit = (user && user.role === 'admin') || isOwner;
+  if (canSeeSplit) return withTotals;
+  const out = { ...withTotals };
+  FEE_COLS.forEach((c) => { delete out[c]; });
+  return out;
+};
+
+// Best-effort optional auth for public GETs: valid token → req.user, else public.
+const attachOptionalUser = async (req) => {
+  try {
+    const h = req.headers.authorization || '';
+    if (!h.startsWith('Bearer ')) return;
+    const token = h.split(' ')[1];
+    if (!token) return;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    const r = await pool.query('SELECT id, role FROM users WHERE id=$1', [decoded.id]);
+    if (r.rows.length) req.user = { id: r.rows[0].id, role: r.rows[0].role };
+  } catch { /* public — ignore bad/expired tokens */ }
+};
+
+// Client-supplied fee % are never trusted. If present they must equal the fixed
+// policy (2.5/2.5/5), otherwise 400. Absent → server defaults apply.
+const validateFeeInputOr400 = (body, res) => {
+  const present = ['agent_fee_percent', 'southswift_fee_percent', 'total_fee_percent']
+    .some((k) => body[k] !== undefined && body[k] !== '' && body[k] !== null);
+  if (!present) return true;
+  const a = body.agent_fee_percent !== undefined && body.agent_fee_percent !== ''
+    ? Number(body.agent_fee_percent) : AGENT_FEE_PERCENT;
+  const s = body.southswift_fee_percent !== undefined && body.southswift_fee_percent !== ''
+    ? Number(body.southswift_fee_percent) : SOUTHSWIFT_FEE_PERCENT;
+  const t = body.total_fee_percent !== undefined && body.total_fee_percent !== ''
+    ? Number(body.total_fee_percent) : TOTAL_FEE_PERCENT;
+  if (a !== AGENT_FEE_PERCENT || s !== SOUTHSWIFT_FEE_PERCENT || t !== TOTAL_FEE_PERCENT
+      || (a + s) !== t) {
+    res.status(400).json({ error: `Fees are fixed at ${AGENT_FEE_PERCENT}% agent + ${SOUTHSWIFT_FEE_PERCENT}% SouthSwift = ${TOTAL_FEE_PERCENT}% total.` });
+    return false;
+  }
+  return true;
+};
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -80,8 +151,9 @@ const getListings = async (req, res) => {
       LIMIT $${values.length - 1} OFFSET $${values.length}
     `, values);
 
+    await attachOptionalUser(req);
     res.json({
-      listings: result.rows,
+      listings: result.rows.map((r) => sanitizeListingForRole(r, req.user)),
       pagination: {
         total,
         page:  parseInt(page),
@@ -106,7 +178,8 @@ const getListing = async (req, res) => {
       [req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Listing not found.' });
-    res.json(result.rows[0]);
+    await attachOptionalUser(req);
+    res.json(sanitizeListingForRole(result.rows[0], req.user));
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
@@ -135,6 +208,9 @@ const createListing = async (req, res) => {
 
   if (!title || !rent_price || !address || !city || !state)
     return res.status(400).json({ error: 'Title, price, address, city, and state are required.' });
+
+  // Fees are fixed server-side — reject client attempts to set anything else.
+  if (!validateFeeInputOr400(req.body, res)) return;
 
   const amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
 
@@ -167,18 +243,20 @@ const createListing = async (req, res) => {
       `INSERT INTO listings
        (agent_id, title, description, property_type, bedrooms, bathrooms,
         rent_price, rent_period, address, city, state, amenities, images, videos, latitude, longitude,
-        is_room_share, room_share_price_per_person, room_share_slots)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        is_room_share, room_share_price_per_person, room_share_slots,
+        agent_fee_percent, southswift_fee_percent, total_fee_percent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        RETURNING *`,
       [req.user.id, title, description, property_type||'apartment',
        bedrooms||1, bathrooms||1, rent_price, rent_period||'yearly',
        address, city, state, amenities, images, videos, latitude||null, longitude||null,
-       is_room_share, room_share_price_per_person, room_share_slots]
+       is_room_share, room_share_price_per_person, room_share_slots,
+       AGENT_FEE_PERCENT, SOUTHSWIFT_FEE_PERCENT, TOTAL_FEE_PERCENT]
     );
     // Phase 2 auto-share (mocked until creds exist) — fire-and-forget so a
     // social API outage can never block or fail listing creation.
     notifyNewListing(result.rows[0], req).catch(() => {});
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(withDerivedTotals(result.rows[0]));
   } catch (err) {
     // Surface specific DB errors (CHECK constraint, type mismatch, etc.) so the agent
     // can see WHY the create failed instead of a blanket "Failed to create listing."
@@ -200,6 +278,13 @@ const updateListing = async (req, res) => {
     return v;
   };
   req.body = Object.fromEntries(Object.entries(req.body).map(([k, v]) => [k, coerce(v)]));
+
+  // Fee percentages are immutable audit fields — never editable via update.
+  // Reject attempts to change them to anything but the fixed policy.
+  if (!validateFeeInputOr400(req.body, res)) return;
+  delete req.body.agent_fee_percent;
+  delete req.body.southswift_fee_percent;
+  delete req.body.total_fee_percent;
 
   if (req.body.amenities !== undefined || req.body['amenities[]'] !== undefined)
     req.body.amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
@@ -353,7 +438,8 @@ const getMyListings = async (req, res) => {
     const result = await pool.query(
       'SELECT * FROM listings WHERE agent_id=$1 ORDER BY created_at DESC', [req.user.id]
     );
-    res.json(result.rows);
+    // Owner view: full split + derived totals (agent-only visibility).
+    res.json(result.rows.map(withDerivedTotals));
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
@@ -378,4 +464,14 @@ const getRoomShareStatus = async (req, res) => {
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
 };
 
-module.exports = { getListings, getListing, createListing, updateListing, deleteListing, getMyListings, getRoomShareStatus };
+module.exports = {
+  getListings,
+  getListing,
+  createListing,
+  updateListing,
+  deleteListing,
+  getMyListings,
+  getRoomShareStatus,
+  sanitizeListingForRole,
+  withDerivedTotals,
+};

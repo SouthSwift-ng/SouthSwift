@@ -293,22 +293,35 @@ export function DealDetail() {
           <div style={ps.left}>
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
-              {[['Rent Amount',`₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`],
-                // ['SwiftShield Fee — Tenant (2.5%)',`₦${formatNaira(deal.service_fee_tenant)}`],
-                // ['SwiftShield Fee — Landlord (2.5%)',`₦${formatNaira(deal.service_fee_landlord)}`],
-                // ['Total Platform Fee (5%)',`₦${formatNaira(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord))}`],
-                // ['Tenant Total',`₦${formatNaira(deal.total_paid)}`],
-                // ['Landlord Disbursement',`₦${formatNaira(Number(deal.rent_amount)-Number(deal.service_fee_landlord))}`],
-                ['Lease Duration',`${deal.lease_duration_months} months`],
-                ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
-                ['Deal ID', deal.id.slice(0,8)+'...'],
-                ['Payment Ref', deal.payment_reference || deal.paystack_reference || 'Awaiting Payment'],
-              ].map(([k,v])=>(
-                <div key={k} style={ps.row}>
-                  <span style={ps.rowK}>{k}</span>
-                  <span style={ps.rowV}>{v}</span>
-                </div>
-              ))}
+              {(() => {
+                const isStaff = ['agent','admin'].includes(user?.role);
+                const rows = [
+                  ['Rent Amount',`₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`],
+                ];
+                // Fee split is agent/admin-only: tenants see rent + total, never charges.
+                if (isStaff && deal.agent_fee_percent != null) {
+                  if (deal.service_fee_tenant != null)
+                    rows.push(['SouthSwift Fee',`₦${formatNaira(deal.service_fee_tenant)} (${deal.southswift_fee_percent}%)`]);
+                  if (deal.service_fee_landlord != null)
+                    rows.push(['Agent-side Fee (landlord funds via agent)',`₦${formatNaira(deal.service_fee_landlord)} (${deal.agent_fee_percent}%)`]);
+                  if (deal.total_paid != null)
+                    rows.push(['Total Paid',`₦${formatNaira(deal.total_paid)}`]);
+                } else if (deal.total_paid != null) {
+                  rows.push(['Total to Pay',`₦${formatNaira(deal.total_paid)}`]);
+                }
+                rows.push(
+                  ['Lease Duration',`${deal.lease_duration_months} months`],
+                  ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
+                  ['Deal ID', deal.id.slice(0,8)+'...'],
+                  ['Payment Ref', deal.payment_reference || deal.paystack_reference || 'Awaiting Payment'],
+                );
+                return rows.map(([k,v])=>(
+                  <div key={k} style={ps.row}>
+                    <span style={ps.rowK}>{k}</span>
+                    <span style={ps.rowV}>{v}</span>
+                  </div>
+                ));
+              })()}
             </div>
 
             <div style={ps.infoCard}>
@@ -763,6 +776,15 @@ export function CreateListing() {
             <label style={ps.label}>Rent Price (₦) *</label>
             <input style={ps.input} type="number" value={form.rent_price} placeholder="800000"
               onChange={e => setForm(f => ({ ...f, rent_price: e.target.value }))}/>
+            {/* Fixed-fee preview — agent-only route, backend enforces 2.5/2.5/5 on submit. */}
+            {Number(form.rent_price) > 0 && (
+              <div style={{fontSize:11.5, color:'#166534', background:'#F0F9F0', border:'1px solid #BBF7D0', borderRadius:8, padding:'8px 10px', marginTop:8}}>
+                Tenant pays ₦{(Number(form.rent_price) + Math.round(Number(form.rent_price) * 0.025)).toLocaleString()} ·
+                Agent-side 2.5% (₦{Math.round(Number(form.rent_price) * 0.025).toLocaleString()}) +
+                SouthSwift 2.5% (₦{Math.round(Number(form.rent_price) * 0.025).toLocaleString()}) = 5% total.
+                Base rent stays ₦{Number(form.rent_price).toLocaleString()}.
+              </div>
+            )}
           </div>
 
           {/* Room Share Toggle */}

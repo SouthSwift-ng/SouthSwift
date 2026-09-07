@@ -270,7 +270,7 @@ export default function ListingDetail() {
 
         <div style={s.body}>
           <div style={s.left}>
-            {/* Title */}
+              {/* Title */}
             <div style={s.titleCard}>
               <div style={{...s.priceRow, justifyContent:'space-between', alignItems:'center'}}>
                 <span>
@@ -279,6 +279,21 @@ export default function ListingDetail() {
                 </span>
                 <ShareListing listing={listing} />
               </div>
+              {/* Tenant total is backend-derived (total_payable); base rent never rewritten.
+                  Old 800k listings show 820k here automatically after backfill. */}
+              {(listing.total_payable || listing.rent_price) && (
+                <div style={{fontSize:12.5, color:'#166534', fontWeight:700, margin:'6px 0 2px'}}>
+                  Total to pay via SwiftShield: &#8358;{formatNaira(
+                    listing.total_payable ?? Math.round(Number(listing.rent_price) * 1.025)
+                  )}
+                </div>
+              )}
+              {/* Fee split is agent/admin-only — tenants see the total above, never this box. */}
+              {['agent','admin'].includes(user?.role) && listing.agent_fee_percent != null && (
+                <div style={{fontSize:11.5, color:'#666', background:'#F8FAF8', border:'1px solid #E5E7EB', borderRadius:8, padding:'8px 10px', marginTop:8}}>
+                  Agent fee {listing.agent_fee_percent}% + SouthSwift {listing.southswift_fee_percent}% = {listing.total_fee_percent}% total (audit)
+                </div>
+              )}
               <h1 style={s.title}>{listing.title}</h1>
               <div style={s.locationRow}><MapPin size={14} color={GOLD}/><span>{listing.address}, {listing.city}, {listing.state}</span></div>
               <div style={s.specs}>
@@ -377,7 +392,12 @@ export default function ListingDetail() {
 
               {(() => {
                 const rent = dealRent;
-                const total = rent * (Number(form.lease_duration_months)/12);
+                // Prefer backend-derived total_payable (works for old listings too);
+                // fall back to 2.5% client estimate only if the field is missing.
+                const payableBase = isRoomShareDeal
+                  ? (listing.room_share_total_per_person ?? listing.total_payable ?? Math.round(rent * 1.025))
+                  : (listing.total_payable ?? Math.round(rent * 1.025));
+                const total = payableBase * (Number(form.lease_duration_months)/12 || 1);
                 const stepIdx = ['booking','swiftdoc','swiftcounsel'].indexOf(step);
 
                 return (

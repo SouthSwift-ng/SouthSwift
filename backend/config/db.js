@@ -96,7 +96,10 @@ const buildInitSqlStatements = () => `
     room_share_price_per_person BIGINT,
     room_share_slots           INTEGER DEFAULT 1,
     room_share_slots_filled    INTEGER DEFAULT 0,
-    videos                     TEXT[]
+    videos                     TEXT[],
+    agent_fee_percent          DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    southswift_fee_percent     DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    total_fee_percent          DECIMAL(5,2) NOT NULL DEFAULT 5.00
   );
 
   -- DEALS TABLE (SwiftShield Escrow Transactions)
@@ -110,6 +113,9 @@ const buildInitSqlStatements = () => `
     service_fee_tenant      BIGINT NOT NULL,
     service_fee_landlord    BIGINT NOT NULL,
     total_paid              BIGINT NOT NULL,
+    agent_fee_percent       DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    southswift_fee_percent  DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    total_fee_percent       DECIMAL(5,2) NOT NULL DEFAULT 5.00,
     status                  VARCHAR(30) DEFAULT 'initiated'
                             CHECK (status IN (
                               'initiated','payment_pending','escrow_held',
@@ -319,6 +325,62 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS email_error TEXT;
     `);
 
+    // ── FEE AUDIT COLUMNS (fixed 2.5% agent + 2.5% SouthSwift = 5% total) ──
+    // Backend is the source of truth: percentages are written server-side on
+    // upload and snapshotted onto deals. rent_price stays the base (e.g. 800k);
+    // tenant total (e.g. 820k) is derived at read time, never stored on listings.
+    await client.query(`
+      ALTER TABLE listings
+        ADD COLUMN IF NOT EXISTS agent_fee_percent      DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS southswift_fee_percent DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS total_fee_percent      DECIMAL(5,2) DEFAULT 5.00;
+    `);
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS agent_fee_percent      DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS southswift_fee_percent DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS total_fee_percent      DECIMAL(5,2) DEFAULT 5.00;
+    `);
+
+    // Backfill old rows that predate the columns (or were inserted as NULL).
+    // Percents are audit labels only — safe on paid + unpaid rows alike.
+    // Naira amounts are NEVER touched here (see repair block below).
+    await client.query(`
+      UPDATE listings SET
+        agent_fee_percent      = COALESCE(agent_fee_percent, 2.50),
+        southswift_fee_percent = COALESCE(southswift_fee_percent, 2.50),
+        total_fee_percent      = COALESCE(total_fee_percent, 5.00)
+      WHERE agent_fee_percent IS NULL
+         OR southswift_fee_percent IS NULL
+         OR total_fee_percent IS NULL;
+    `);
+    await client.query(`
+      UPDATE deals SET
+        agent_fee_percent      = COALESCE(agent_fee_percent, 2.50),
+        southswift_fee_percent = COALESCE(southswift_fee_percent, 2.50),
+        total_fee_percent      = COALESCE(total_fee_percent, 5.00)
+      WHERE agent_fee_percent IS NULL
+         OR southswift_fee_percent IS NULL
+         OR total_fee_percent IS NULL;
+    `);
+
+    // Enforce the fixed policy going forward. Sum-check only (not per-side values)
+    // so a future policy change is a single migration, not a rewrite.
+    await client.query(`
+      ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_fee_check;
+      ALTER TABLE listings ADD CONSTRAINT listings_fee_check CHECK (
+        agent_fee_percent + southswift_fee_percent = total_fee_percent
+        AND total_fee_percent = 5.00
+      );
+    `);
+    await client.query(`
+      ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_fee_check;
+      ALTER TABLE deals ADD CONSTRAINT deals_fee_check CHECK (
+        agent_fee_percent + southswift_fee_percent = total_fee_percent
+        AND total_fee_percent = 5.00
+      );
+    `);
+
     // Allow 'archived' status on existing databases (CHECK constraint predates it)
     await client.query(`
       ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;
@@ -384,6 +446,20 @@ const initDB = async () => {
       SET total_paid = rent_amount + service_fee_tenant, updated_at=NOW()
       WHERE status IN ('initiated','payment_pending')
         AND total_paid <> rent_amount + service_fee_tenant;
+    `);
+
+    // Repair fee naira amounts drifted from the fixed 2.5% policy — unpaid only.
+    // Paid escrow deals are report-only (never rewritten here).
+    await client.query(`
+      UPDATE deals
+      SET service_fee_tenant   = ROUND(rent_amount::numeric * 0.025),
+          service_fee_landlord = ROUND(rent_amount::numeric * 0.025),
+          total_paid           = rent_amount + ROUND(rent_amount::numeric * 0.025),
+          updated_at = NOW()
+      WHERE status IN ('initiated','payment_pending')
+        AND rent_amount > 0
+        AND (service_fee_tenant <> ROUND(rent_amount::numeric * 0.025)
+          OR service_fee_landlord <> ROUND(rent_amount::numeric * 0.025));
     `);
 
     // Enable RLS on all public tables — blocks direct PostgREST access;

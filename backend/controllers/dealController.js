@@ -211,10 +211,23 @@ const initiateDeal = async (req, res) => {
       return res.status(400).json({ error: 'This listing has no valid price set. Please contact the agent or SouthSwift support.' });
     }
 
-    // Calculate fees — 2.5% from tenant, 2.5% from agent (5% total split equally)
+    // Calculate fees — fixed 2.5% tenant-side + 2.5% agent-side = 5% total.
+    // Backend is source of truth: percentages come from the listing snapshot
+    // (fallback to fixed defaults for pre-migration rows), never from the client.
+    // rent stays the base (800k); tenant pays rent + tenant fee (820k);
+    // 780k flows via the agent account to the landlord off-platform.
     const { serviceFeeTenant: service_fee_tenant,
             serviceFeeLandlord: service_fee_landlord,
-            totalPaid: total_paid } = computeDealAmounts(rent_amount);
+            totalPaid: total_paid,
+            agentFeePercent: agent_fee_percent,
+            southswiftFeePercent: southswift_fee_percent,
+            totalFeePercent: total_fee_percent } = computeDealAmounts(rent_amount);
+    const listing_agent_fee_percent = listing.agent_fee_percent != null
+      ? Number(listing.agent_fee_percent) : agent_fee_percent;
+    const listing_southswift_fee_percent = listing.southswift_fee_percent != null
+      ? Number(listing.southswift_fee_percent) : southswift_fee_percent;
+    const listing_total_fee_percent = listing.total_fee_percent != null
+      ? Number(listing.total_fee_percent) : total_fee_percent;
 
     let deal;
     // Only overwrite swiftdoc_data on retry when the wizard actually re-sent it — the
@@ -226,10 +239,13 @@ const initiateDeal = async (req, res) => {
       const updated = await client.query(
         `UPDATE deals SET rent_amount=$1, service_fee_tenant=$2, service_fee_landlord=$3,
            total_paid=$4, move_in_date=$5, lease_duration_months=$6, status='initiated',
-           swiftdoc_data=COALESCE($7::jsonb, swiftdoc_data), updated_at=NOW()
-         WHERE id=$8 RETURNING *`,
+           agent_fee_percent=$7, southswift_fee_percent=$8, total_fee_percent=$9,
+           swiftdoc_data=COALESCE($10::jsonb, swiftdoc_data), updated_at=NOW()
+         WHERE id=$11 RETURNING *`,
         [rent_amount, service_fee_tenant, service_fee_landlord, total_paid,
-         move_in_date, lease_duration_months, swiftdoc_data_json, reusable.id]
+         move_in_date, lease_duration_months,
+         listing_agent_fee_percent, listing_southswift_fee_percent, listing_total_fee_percent,
+         swiftdoc_data_json, reusable.id]
       );
       deal = updated.rows[0];
       room_share_slot_number = deal.room_share_slot_number;
@@ -240,12 +256,14 @@ const initiateDeal = async (req, res) => {
         `INSERT INTO deals
          (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
           service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
-          is_room_share_deal, room_share_slot_number, swiftdoc_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11,$12::jsonb) RETURNING *`,
+          is_room_share_deal, room_share_slot_number, swiftdoc_data,
+          agent_fee_percent, southswift_fee_percent, total_fee_percent)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11,$12::jsonb,$13,$14,$15) RETURNING *`,
         [listing_id, req.user.id, listing.agent_id, rent_amount,
          service_fee_tenant, service_fee_landlord, total_paid,
          move_in_date, lease_duration_months,
-         is_room_share_deal, room_share_slot_number, swiftdoc_data_json]
+         is_room_share_deal, room_share_slot_number, swiftdoc_data_json,
+         listing_agent_fee_percent, listing_southswift_fee_percent, listing_total_fee_percent]
       );
       deal = dealResult.rows[0];
 
@@ -280,14 +298,20 @@ const initiateDeal = async (req, res) => {
         await pool.query('UPDATE listings SET is_available=false WHERE id=$1 AND is_available=true', [listing_id]);
       }
       await pool.query("UPDATE deals SET payment_mode='manual', status='payment_pending', updated_at=NOW() WHERE id=$1", [deal.id]);
+      // Fee split is agent/admin-only. Tenants see base rent + total only.
+      const canSeeSplit = req.user && ['agent', 'admin'].includes(req.user.role);
       res.json({
         deal_id:      deal.id,
         payment_mode: 'manual',
         amount_due:   total_paid,
         account:     { account_name, account_number, bank_name },
-        breakdown: {
+        breakdown: canSeeSplit ? {
           rent:            `₦${rent_amount.toLocaleString()}`,
-          swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (2.5%)`,
+          agent_fee:       `₦${service_fee_landlord.toLocaleString()} (${listing_agent_fee_percent}%)`,
+          swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (${listing_southswift_fee_percent}%)`,
+          total_you_pay:   `₦${total_paid.toLocaleString()}`,
+        } : {
+          rent:            `₦${rent_amount.toLocaleString()}`,
           total_you_pay:   `₦${total_paid.toLocaleString()}`,
         },
         message: is_room_share_deal
@@ -330,9 +354,13 @@ const initiateDeal = async (req, res) => {
       deal_id:           deal.id,
       payment_url:       authorization_url,
       paystack_reference: reference,
-      breakdown: {
+      breakdown: (req.user && ['agent', 'admin'].includes(req.user.role)) ? {
         rent:           `₦${rent_amount.toLocaleString()}`,
-        swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (2.5%)`,
+        agent_fee:      `₦${service_fee_landlord.toLocaleString()} (${listing_agent_fee_percent}%)`,
+        swiftshield_fee: `₦${service_fee_tenant.toLocaleString()} (${listing_southswift_fee_percent}%)`,
+        total_you_pay:  `₦${total_paid.toLocaleString()}`,
+      } : {
+        rent:           `₦${rent_amount.toLocaleString()}`,
         total_you_pay:  `₦${total_paid.toLocaleString()}`,
       },
       message: is_room_share_deal
@@ -611,6 +639,20 @@ const raiseDispute = async (req, res) => {
   }
 };
 
+// Fee split is agent/admin-only: tenants see base rent + total, never the
+// percent columns or the agent-side naira fee.
+const sanitizeDealForRole = (deal, user) => {
+  if (!deal || typeof deal !== 'object') return deal;
+  if (user && ['agent', 'admin'].includes(user.role)) return deal;
+  const out = { ...deal };
+  delete out.agent_fee_percent;
+  delete out.southswift_fee_percent;
+  delete out.total_fee_percent;
+  delete out.service_fee_tenant;
+  delete out.service_fee_landlord;
+  return out;
+};
+
 // GET /api/deals — get user's deals
 const getMyDeals = async (req, res) => {
   try {
@@ -622,7 +664,7 @@ const getMyDeals = async (req, res) => {
        ORDER BY d.created_at DESC`,
       [req.user.id]
     );
-    res.json(result.rows);
+    res.json(result.rows.map((d) => sanitizeDealForRole(d, req.user)));
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
@@ -663,7 +705,7 @@ const getDeal = async (req, res) => {
         deal.tenant_email = null;
       }
     }
-    res.json(deal);
+    res.json(sanitizeDealForRole(deal, req.user));
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
   }
@@ -733,4 +775,4 @@ const cancelDeal = async (req, res) => {
   }
 };
 
-module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal, runSwiftDocBackground };
+module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal, runSwiftDocBackground, sanitizeDealForRole };

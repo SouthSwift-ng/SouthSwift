@@ -9,11 +9,16 @@
 //
 // Expected env when going live:
 //   SHARE_LIVE=true
+//   CLIENT_URL=https://southswift.com.ng   (public share links + redirect target)
+//   SHARE_PATH_PREFIX=/s                   (must match frontend REACT_APP_SHARE_PATH_PREFIX + vercel.json)
 //   SHARE_WEBHOOK_URL=https://...          (generic webhook, e.g. Slack/Discord)
 //   WHATSAPP_TOKEN=...  WHATSAPP_PHONE_ID=...
 //   X_BEARER_TOKEN=...
 //   FACEBOOK_PAGE_TOKEN=...  FACEBOOK_PAGE_ID=...
 //   TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...
+// NOTE: BACKEND_ORIGIN (e.g. https://southswift.onrender.com) lives on the
+// Vercel project env only — read by frontend/api/s/[id].js. Never put the
+// backend host here or in any shared text.
 
 const axios = require('axios');
 const { buildShareText, buildListingFrontendUrl } = require('./share');
@@ -23,16 +28,16 @@ const isAutoShareMocked = () => !isLive();
 
 const asId = (listing) => (typeof listing === 'object' ? listing?.id : listing);
 
-// Backend share URL (crawlable OG page) for the current request, or a
-// reasonable default when called outside a request (createListing hook).
-const buildApiShareUrl = (listingOrId, req) => {
+// Public share URL — always on the CLIENT domain (<CLIENT_URL>/s/:id).
+// Vercel proxies it to <BACKEND_ORIGIN>/api/share/:id (frontend/vercel.json +
+// frontend/api/s/[id].js), so the backend host never appears in shared text.
+// `req` is kept for backwards-compat but deliberately ignored — using the
+// request host here is what leaked southswift.onrender.com into shares.
+const buildApiShareUrl = (listingOrId) => {
   const id = asId(listingOrId);
-  if (req?.protocol && typeof req.get === 'function') {
-    return `${req.protocol}://${req.get('host')}/api/share/${id}`;
-  }
-  const apiBase = String(process.env.BACKEND_PUBLIC_URL || '').replace(/\/+$/, '');
-  if (apiBase) return `${apiBase}/api/share/${id}`;
-  return `/api/share/${id}`;
+  const base = String(process.env.CLIENT_URL || 'https://southswift.com.ng').replace(/\/+$/, '');
+  const prefix = `/${String(process.env.SHARE_PATH_PREFIX || '/s').replace(/^\/+|\/+$/g, '')}`;
+  return `${base}${prefix}/${id}`;
 };
 
 const buildListingSharePayload = (listing = {}, req) => {

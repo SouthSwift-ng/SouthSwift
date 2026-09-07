@@ -55,3 +55,16 @@ test('notifyNewListing resolves mocked results and never throws', async () => {
     assert.strictEqual(r.mocked, true);
   }
 });
+
+test('share URLs stay on the client domain (never the backend host)', async () => {
+  process.env.CLIENT_URL = 'https://southswift.com.ng';
+  delete process.env.SHARE_PATH_PREFIX;
+  const { buildApiShareUrl } = require('../utils/autoShare');
+  // A request from the backend host must NOT leak into the share URL.
+  const fakeReq = { protocol: 'https', get: () => 'southswift.onrender.com' };
+  const url = buildApiShareUrl(listing, fakeReq);
+  assert.strictEqual(url, 'https://southswift.com.ng/s/42');
+  const payload = buildListingSharePayload(listing, fakeReq);
+  assert.match(payload.shareUrl, /^https:\/\/southswift\.com\.ng\/s\/42$/);
+  assert.doesNotMatch(payload.text, /onrender/);
+});

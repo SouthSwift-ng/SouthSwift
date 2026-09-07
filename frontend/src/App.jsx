@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useState, useEffect, createContext, useContext } from 'react';
 import { getMe } from './utils/api';
@@ -45,6 +45,14 @@ function AppShell({ children }) {
   );
 }
 
+// /s/:id is served by the Vercel share proxy in production (frontend/vercel.json
+// + api/s/[id].js → BACKEND_ORIGIN). `npm start` can't run serverless functions,
+// so this client-side fallback keeps shared links working in local dev.
+function ShareRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/listings/${id}`} replace />;
+}
+
 export default function App() {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
@@ -85,6 +93,7 @@ export default function App() {
               <ProtectedRoute><Feedback /></ProtectedRoute>
             } />
             <Route path="/listings/:id" element={<ListingDetail />} />
+            <Route path="/s/:id" element={<ShareRedirect />} />
             <Route path="/agents/:id"  element={<AgentProfile />} />
             <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
             <Route path="/terms-of-service"  element={<TermsOfService />} />

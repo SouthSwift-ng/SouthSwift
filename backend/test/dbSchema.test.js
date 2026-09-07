@@ -12,4 +12,7 @@ test('initialization SQL includes the expanded SouthSwift schema fields', () => 
   assert.match(sql, /room_share_slots_filled\s+INTEGER DEFAULT 0/i);
   assert.match(sql, /swiftdoc_data\s+JSONB/i);
   assert.match(sql, /payment_anomaly\s+TEXT/i);
+  assert.match(sql, /agent_fee_percent\s+DECIMAL/i);
+  assert.match(sql, /southswift_fee_percent\s+DECIMAL/i);
+  assert.match(sql, /total_fee_percent\s+DECIMAL/i);
 });

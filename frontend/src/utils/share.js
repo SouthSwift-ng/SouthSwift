@@ -2,34 +2,38 @@
 // Pure functions (no React) so listings can be shared from ListingDetail,
 // ListingCard, and the agent Dashboard with identical text + links.
 
-const apiBase = () => {
-  const raw = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-  return String(raw).replace(/\/+$/, '');
+// Share path prefix — override with REACT_APP_SHARE_PATH_PREFIX if the
+// vercel.json rewrite source ever changes (must match it + backend
+// SHARE_PATH_PREFIX).
+const sharePath = () => {
+  const raw = process.env.REACT_APP_SHARE_PATH_PREFIX || '/s';
+  return `/${String(raw).replace(/^\/+|\/+$/g, '')}`;
 };
 
-// Crawlable share URL — backend returns dynamic OG tags (photo, price, title)
-// then redirects humans to the SPA listing page. WhatsApp/Facebook/Twitter
-// unfurl this URL; the raw /listings/:id SPA URL has only static OG tags.
+// Client origin — runtime window.location.origin first (works across
+// localhost / preview / prod with zero config), REACT_APP_CLIENT_URL as the
+// explicit override for contexts without window.
+const clientOrigin = () => {
+  if (typeof window !== 'undefined' && window.location?.origin) return window.location.origin;
+  return String(process.env.REACT_APP_CLIENT_URL || '').replace(/\/+$/, '');
+};
+
+// Crawlable share URL — always on the CLIENT domain (/s/:id). Vercel proxies
+// it to <BACKEND_ORIGIN>/api/share/:id (see frontend/vercel.json + api/s/[id].js),
+// so crawlers get per-listing OG tags while users never see the backend host.
+// The raw /listings/:id SPA URL has only static OG tags, so it is not shared.
 export const buildShareUrl = (listingOrId) => {
   const id = typeof listingOrId === 'object' ? listingOrId?.id : listingOrId;
   if (id === undefined || id === null || id === '') return '';
-  const base = apiBase();
-  // REACT_APP_API_URL may be relative (/_/backend/api on Vercel services) —
-  // prefix with the current origin so the shared link is absolute.
-  if (base.startsWith('/')) {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${origin}${base}/share/${id}`;
-  }
-  return `${base}/share/${id}`;
+  return `${clientOrigin()}${sharePath()}/${id}`;
 };
 
 // Human listing URL (fallback / canonical for display).
 export const buildListingUrl = (listingOrId) => {
   const id = typeof listingOrId === 'object' ? listingOrId?.id : listingOrId;
   if (id === undefined || id === null || id === '') return '';
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}/listings/${id}`;
-  }
+  const origin = clientOrigin();
+  if (origin) return `${origin}/listings/${id}`;
   return `/listings/${id}`;
 };
 
@@ -50,6 +54,7 @@ export const buildShareText = (listing = {}, shareUrl = '') => {
   const title = listing.title && listing.title !== head ? `\n${listing.title}` : '';
   return `${head} — ${price}${shield}${title}\n${url}`.trim();
 };
+
 
 export const buildShareLinks = (listing = {}) => {
   const url = buildShareUrl(listing);
