@@ -1,7 +1,10 @@
 const nodemailer = require('nodemailer');
+const axios = require('axios');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.EMAIL_PASS;
+receiving 
 
+const EMAIL_FROM = process.env.EMAIL_FROM || 'SouthSwift 🛡️ <support@southswift.com.ng>';
 // Create transporter with flexible configuration
 const createTransporter = () => {
   const config = {
