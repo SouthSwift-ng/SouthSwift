@@ -98,7 +98,7 @@ export function DealDetail() {
   const [myTxn, setMyTxn]         = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [proof, setProof] = useState({
-    amount_naira:      deal?.rent_amount ? String(deal.rent_amount * (Number(deal.lease_duration_months)/12)) : '',
+    amount_naira:      deal?.total_paid ? String(deal.total_paid * (Number(deal.lease_duration_months)/12)) : '',
     payer_bank:        '',
     transfer_reference:'',
     transfer_date:     '',
@@ -124,7 +124,7 @@ export function DealDetail() {
     getCompanyAccount().then(r => setAccount(r.data)).catch(() => {});
     getNigerianBanks().then(r => setBanks(r.data.banks || [])).catch(() => {});
     getMyTransaction(deal.id).then(r => setMyTxn(r.data.transaction)).catch(() => {});
-    setProof(p => ({ ...p, amount_naira: String(deal.rent_amount * (Number(deal.lease_duration_months)/12)) }));
+    setProof(p => ({ ...p, amount_naira: String(deal.total_paid * (Number(deal.lease_duration_months)/12)) }));
   }, [deal, user]);
 
   // Returning from Paystack — the callback appends ?reference=...&trxref=...
@@ -296,7 +296,7 @@ export function DealDetail() {
               {(() => {
                 const isStaff = ['agent','admin'].includes(user?.role);
                 const rows = [
-                  ['Rent Amount',`₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`],
+                  ['Rent Amount',`₦${formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))}`],
                 ];
                 // Fee split is agent/admin-only: tenants see rent + total, never charges.
                 if (isStaff && deal.agent_fee_percent != null) {
@@ -304,11 +304,8 @@ export function DealDetail() {
                     rows.push(['SouthSwift Fee',`₦${formatNaira(deal.service_fee_tenant)} (${deal.southswift_fee_percent}%)`]);
                   if (deal.service_fee_landlord != null)
                     rows.push(['Agent-side Fee (landlord funds via agent)',`₦${formatNaira(deal.service_fee_landlord)} (${deal.agent_fee_percent}%)`]);
-                  if (deal.total_paid != null)
-                    rows.push(['Total Paid',`₦${formatNaira(deal.total_paid)}`]);
-                } else if (deal.total_paid != null) {
-                  rows.push(['Total to Pay',`₦${formatNaira(deal.total_paid)}`]);
-                }
+                
+                } 
                 rows.push(
                   ['Lease Duration',`${deal.lease_duration_months} months`],
                   ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
@@ -378,7 +375,7 @@ export function DealDetail() {
                 ) : (
                   <div style={ps.actionCard}>
                     <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
-                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
+                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
                     {account ? (
                       <div style={{background:'#fff', borderRadius:10, padding:'14px 16px', border:'1px solid #BBF7D0', marginBottom:14}}>
                         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
@@ -418,7 +415,7 @@ export function DealDetail() {
                   <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
                   <p style={ps.actionDesc}>Pay securely via Paystack. Your rent stays in SwiftShield escrow and is only released when you confirm move-in.</p>
                   <button onClick={handlePayNow} disabled={paying} style={{...ps.confirmBtn, opacity: paying ? 0.7 : 1}}>
-                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.rent_amount * (Number(deal.lease_duration_months)/12))}`}
+                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))}`}
                   </button>
                 </div>
               )
@@ -587,7 +584,7 @@ export function CreateListing() {
         const l = r.data;
         setForm({
           title: l.title || '', description: l.description || '', property_type: l.property_type || 'apartment',
-          bedrooms: l.bedrooms ?? 1, bathrooms: l.bathrooms ?? 1, rent_price: l.rent_price ?? '',
+          bedrooms: l.bedrooms ?? 1, bathrooms: l.bathrooms ?? 1, rent_price: l.total_paid ?? '',
           rent_period: l.rent_period || 'yearly', address: l.address || '',
           city: l.city || '', state: l.state || '',
           amenities: Array.isArray(l.amenities) ? l.amenities.join(', ') : (l.amenities || ''),
@@ -776,15 +773,7 @@ export function CreateListing() {
             <label style={ps.label}>Rent Price (₦) *</label>
             <input style={ps.input} type="number" value={form.rent_price} placeholder="800000"
               onChange={e => setForm(f => ({ ...f, rent_price: e.target.value }))}/>
-            {/* Fixed-fee preview — agent-only route, backend enforces 2.5/2.5/5 on submit. */}
-            {Number(form.rent_price) > 0 && (
-              <div style={{fontSize:11.5, color:'#166534', background:'#F0F9F0', border:'1px solid #BBF7D0', borderRadius:8, padding:'8px 10px', marginTop:8}}>
-                Tenant pays ₦{(Number(form.rent_price) + Math.round(Number(form.rent_price) * 0.025)).toLocaleString()} ·
-                Agent-side 2.5% (₦{Math.round(Number(form.rent_price) * 0.025).toLocaleString()}) +
-                SouthSwift 2.5% (₦{Math.round(Number(form.rent_price) * 0.025).toLocaleString()}) = 5% total.
-                Base rent stays ₦{Number(form.rent_price).toLocaleString()}.
-              </div>
-            )}
+        
           </div>
 
           {/* Room Share Toggle */}
@@ -1095,7 +1084,7 @@ export function AdminPanel() {
                   <div style={ps.agentDetail}>Tenant: {d.tenant_name} · Agent: {d.agent_name}</div>
                 </div>
                 <div style={{textAlign:'right'}}>
-                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(d.rent_amount)}</div>
+                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(d.total_paid)}</div>
                   <div style={{fontSize:11, color:'#888'}}>{d.status}</div>
                   {d.status==='escrow_held' && (
                     <button onClick={async()=>{await releaseFunds(d.id);toast.success('Funds released');}} style={ps.relBtn}>Release Funds</button>
@@ -1173,7 +1162,7 @@ export function AdminPanel() {
                       {d.listing_title} — {d.city}
                     </div>
                     <div style={{fontSize:12, color:'#888', marginBottom:4}}>
-                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{formatNaira(d.rent_amount)}
+                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{formatNaira(d.total_paid)}
                     </div>
                     <div style={{fontSize:12, color:'#DC2626', marginBottom:10}}>
                       <strong>Dispute:</strong> {d.dispute_reason}

@@ -17,7 +17,7 @@ export default function ListingCard({ listing, distanceKm }) {
     id, title, city, state, rent_price, rent_period,
     bedrooms, bathrooms, property_type, images,
     is_swiftshield, is_room_share, room_share_slots, room_share_slots_filled,
-    agent_name, verification_status
+    agent_name, verification_status,total_payable
   } = listing;
 
   const img = images?.[0] || PLACEHOLDER;
@@ -52,7 +52,7 @@ export default function ListingCard({ listing, distanceKm }) {
       {/* Body */}
       <div style={s.body}>
         <div style={s.price}>
-          ₦{fmt(rent_price)}
+          ₦{fmt(total_payable)}
           <span style={s.period}>/{rent_period === 'monthly' ? 'mo' : 'yr'}</span>
         </div>
         <div style={s.title}>{title}</div>

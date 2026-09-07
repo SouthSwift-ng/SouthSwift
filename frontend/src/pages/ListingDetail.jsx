@@ -229,8 +229,8 @@ export default function ListingDetail() {
   const isRoomShareDeal = !!listing.is_room_share && dealMode === 'room_share';
   // Same fallback as the backend: agent never set a per-person price → even split of rent
   const perPersonPrice = Number(listing.room_share_price_per_person) ||
-    Math.round(Number(listing.rent_price) / Math.max(parseInt(listing.room_share_slots) || 2, 1));
-  const dealRent   = isRoomShareDeal ? perPersonPrice : Number(listing.rent_price);
+    Math.round(Number(listing.total_payable) / Math.max(parseInt(listing.room_share_slots) || 2, 1));
+  const dealRent   = isRoomShareDeal ? perPersonPrice : Number(listing.total_payable);
   const dealBlocked = isRoomShareDeal ? slotsFull : (listing.is_room_share && slotsFilled > 0);
 
   return (
@@ -274,17 +274,17 @@ export default function ListingDetail() {
             <div style={s.titleCard}>
               <div style={{...s.priceRow, justifyContent:'space-between', alignItems:'center'}}>
                 <span>
-                  <span style={s.price}>&#8358;{formatNaira(listing.rent_price)}</span>
+                  <span style={s.price}>&#8358;{formatNaira(listing.total_payable)}</span>
                   <span style={s.period}>/{listing.rent_period==='monthly'?'month':'year'}</span>
                 </span>
                 <ShareListing listing={listing} />
               </div>
               {/* Tenant total is backend-derived (total_payable); base rent never rewritten.
                   Old 800k listings show 820k here automatically after backfill. */}
-              {(listing.total_payable || listing.rent_price) && (
+              {(listing.total_payable || listing.total_payable) && (
                 <div style={{fontSize:12.5, color:'#166534', fontWeight:700, margin:'6px 0 2px'}}>
                   Total to pay via SwiftShield: &#8358;{formatNaira(
-                    listing.total_payable ?? Math.round(Number(listing.rent_price) * 1.025)
+                     Math.round(Number(listing.total_payable) )
                   )}
                 </div>
               )}
