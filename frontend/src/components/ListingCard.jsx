@@ -14,7 +14,7 @@ const PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w
 
 export default function ListingCard({ listing, distanceKm }) {
   const {
-    id, title, city, state, rent_price, rent_period,
+    id, title, address, city, state, rent_price, rent_period,
     bedrooms, bathrooms, property_type, images,
     is_swiftshield, is_room_share, room_share_slots, room_share_slots_filled,
     agent_name, verification_status,total_payable
@@ -58,7 +58,7 @@ export default function ListingCard({ listing, distanceKm }) {
         <div style={s.title}>{title}</div>
         <div style={s.location}>
           <MapPin size={12} color={GOLD} />
-          {city}, {state}
+           {address}, {city}, {state} 
         </div>
         {distanceKm != null && (
           <div style={s.distanceBadge}>📍 {distanceKm}km away</div>
