@@ -15,4 +15,7 @@ test('initialization SQL includes the expanded SouthSwift schema fields', () => 
   assert.match(sql, /agent_fee_percent\s+DECIMAL/i);
   assert.match(sql, /southswift_fee_percent\s+DECIMAL/i);
   assert.match(sql, /total_fee_percent\s+DECIMAL/i);
+  assert.match(sql, /inspection_fee\s+BIGINT/i);
+  assert.match(sql, /has_paid_inspection\s+BOOLEAN/i);
+  assert.match(sql, /payment_type.*CHECK.*rent.*inspection|CHECK\s*\(payment_type IN \('rent','inspection'\)/i);
 });

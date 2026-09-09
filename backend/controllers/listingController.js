@@ -8,6 +8,7 @@ const {
   SOUTHSWIFT_FEE_PERCENT,
   TOTAL_FEE_PERCENT,
   totalPayableForRent,
+  parseInspectionFee,
 } = require('../utils/money');
 
 // ── FEE HELPERS (backend is source of truth; tenants never see the split) ──
@@ -212,6 +213,11 @@ const createListing = async (req, res) => {
   // Fees are fixed server-side — reject client attempts to set anything else.
   if (!validateFeeInputOr400(req.body, res)) return;
 
+  // Inspection fee is agent-set per listing, capped at ₦5,000 (0 skips the step).
+  const inspection_fee = parseInspectionFee(req.body.inspection_fee);
+  if (inspection_fee && typeof inspection_fee === 'object' && inspection_fee.error)
+    return res.status(400).json({ error: inspection_fee.error });
+
   const amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
 
   const is_room_share = req.body.is_room_share === 'true' || req.body.is_room_share === true;
@@ -244,14 +250,14 @@ const createListing = async (req, res) => {
        (agent_id, title, description, property_type, bedrooms, bathrooms,
         rent_price, rent_period, address, city, state, amenities, images, videos, latitude, longitude,
         is_room_share, room_share_price_per_person, room_share_slots,
-        agent_fee_percent, southswift_fee_percent, total_fee_percent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        agent_fee_percent, southswift_fee_percent, total_fee_percent, inspection_fee)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        RETURNING *`,
       [req.user.id, title, description, property_type||'apartment',
        bedrooms||1, bathrooms||1, rent_price, rent_period||'yearly',
        address, city, state, amenities, images, videos, latitude||null, longitude||null,
        is_room_share, room_share_price_per_person, room_share_slots,
-       AGENT_FEE_PERCENT, SOUTHSWIFT_FEE_PERCENT, TOTAL_FEE_PERCENT]
+       AGENT_FEE_PERCENT, SOUTHSWIFT_FEE_PERCENT, TOTAL_FEE_PERCENT, inspection_fee]
     );
     // Phase 2 auto-share (mocked until creds exist) — fire-and-forget so a
     // social API outage can never block or fail listing creation.
@@ -285,6 +291,15 @@ const updateListing = async (req, res) => {
   delete req.body.agent_fee_percent;
   delete req.body.southswift_fee_percent;
   delete req.body.total_fee_percent;
+
+  // Inspection fee IS agent-editable (cap ₦5,000) — but only affects future
+  // deals; existing deal snapshots stay frozen.
+  if (req.body.inspection_fee !== undefined) {
+    const parsed = parseInspectionFee(req.body.inspection_fee);
+    if (parsed && typeof parsed === 'object' && parsed.error)
+      return res.status(400).json({ error: parsed.error });
+    req.body.inspection_fee = parsed;
+  }
 
   if (req.body.amenities !== undefined || req.body['amenities[]'] !== undefined)
     req.body.amenities = sanitizeAmenities(req.body['amenities[]'] ?? req.body.amenities);
@@ -354,7 +369,7 @@ const updateListing = async (req, res) => {
   }
 
   const fields = ['title','description','rent_price','bedrooms','bathrooms','address','city','state','is_available',
-                  'property_type','rent_period','amenities',
+                  'property_type','rent_period','amenities','inspection_fee',
                   'is_room_share','room_share_price_per_person','room_share_slots','latitude','longitude',
                   'images','videos'];
 

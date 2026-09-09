@@ -11,6 +11,24 @@ const AGENT_FEE_PERCENT = 2.5;
 const SOUTHSWIFT_FEE_PERCENT = 2.5;
 const TOTAL_FEE_PERCENT = 5.0;
 
+// Inspection fee policy: agent-set per listing, capped at ₦5,000.
+// Old listings backfill to the default; 0/blank skips the inspection step.
+const INSPECTION_FEE_DEFAULT = 3000;
+const INSPECTION_FEE_MAX = 5000;
+
+// Validate an agent-supplied inspection fee. Returns the normalized integer,
+// or an { error } object the controller turns into a 400.
+function parseInspectionFee(raw) {
+  if (raw === undefined || raw === null || raw === '') return INSPECTION_FEE_DEFAULT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(Math.round(n)) || n < 0)
+    return { error: 'Inspection fee must be a non-negative whole-naira amount.' };
+  const fee = Math.round(n);
+  if (fee > INSPECTION_FEE_MAX)
+    return { error: `Inspection fee must not exceed ₦${INSPECTION_FEE_MAX.toLocaleString()}.` };
+  return fee;
+}
+
 // Given the rent (in naira), compute the fees and the total the tenant pays into escrow.
 // rent_amount comes from Postgres BIGINT (a string), so coerce explicitly.
 function computeDealAmounts(rentAmount) {
@@ -27,6 +45,44 @@ function computeDealAmounts(rentAmount) {
     southswiftFeePercent: SOUTHSWIFT_FEE_PERCENT,
     totalFeePercent: TOTAL_FEE_PERCENT,
   };
+}
+
+// Inspection gate helpers — pure so the wizard gate, submit guards and tests
+// share one definition. A deal holds a listing reservation iff it never needed
+// inspection (fee 0) or it satisfied the gate (paid or skipped).
+function requiresInspectionFee(source) {
+  return Number(source?.inspection_fee) > 0;
+}
+
+function inspectionSatisfied(deal) {
+  if (!deal || typeof deal !== 'object') return false;
+  if (!requiresInspectionFee(deal)) return true;
+  return deal.has_paid_inspection === true || deal.inspection_skipped === true;
+}
+
+function dealHoldsReservation(deal) {
+  if (!deal || typeof deal !== 'object') return false;
+  return inspectionSatisfied(deal);
+}
+
+// Inspection-hold expiry — pure so the sweeper and tests share one definition.
+// A pre-rent deal whose inspection gate was satisfied (paid or skipped) holds
+// the unit for INSPECTION_HOLD_TIMEOUT_HOURS; past that the hold lapses and the
+// listing re-opens. `now` defaults to Date.now() but is injectable for tests.
+// The hold timestamp is whichever resolution came first (paid_at, else skipped_at).
+function isInspectionHoldExpired(deal, timeoutHours, now = Date.now()) {
+  if (!deal || typeof deal !== 'object') return false;
+  if (!['initiated', 'payment_pending'].includes(deal.status)) return false;
+  if (!inspectionSatisfied(deal)) return false;
+  // Legacy rows whose flag predates the timestamp columns fall back to
+  // updated_at (a stale untouched hold is exactly what should lapse).
+  const heldAt = deal.inspection_paid_at || deal.inspection_skipped_at || deal.updated_at;
+  if (!heldAt) return false;
+  const heldMs = new Date(heldAt).getTime();
+  if (!Number.isFinite(heldMs)) return false;
+  const timeout = Number(timeoutHours);
+  if (!Number.isFinite(timeout) || timeout <= 0) return false;
+  return Number(now) - heldMs > timeout * 3600 * 1000;
 }
 
 // Derived tenant total for a listing base price — used for read-time display
@@ -54,6 +110,13 @@ module.exports = {
   AGENT_FEE_PERCENT,
   SOUTHSWIFT_FEE_PERCENT,
   TOTAL_FEE_PERCENT,
+  INSPECTION_FEE_DEFAULT,
+  INSPECTION_FEE_MAX,
+  parseInspectionFee,
+  requiresInspectionFee,
+  inspectionSatisfied,
+  dealHoldsReservation,
+  isInspectionHoldExpired,
   computeDealAmounts,
   totalPayableForRent,
   nairaToKobo,

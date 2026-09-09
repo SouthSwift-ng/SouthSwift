@@ -354,7 +354,7 @@ const adminController = {
   // GET /api/admin/dashboard
   getDashboard: async (req, res) => {
     try {
-      const [users, listings, deals, agents, revenue] = await Promise.all([
+      const [users, listings, deals, agents, revenue, inspectionRevenue] = await Promise.all([
         pool.query('SELECT COUNT(*) FROM users'),
         pool.query('SELECT COUNT(*) FROM listings'),
         pool.query("SELECT COUNT(*) FROM deals WHERE status='completed'"),
@@ -364,6 +364,11 @@ const adminController = {
         pool.query(`SELECT COALESCE(SUM(service_fee_tenant + service_fee_landlord),0) AS total
                     FROM deals
                     WHERE funds_released_at IS NOT NULL AND refunded_at IS NULL`),
+        // Inspection fees are SouthSwift revenue on payment (non-refundable) —
+        // recognised when marked paid, independent of rent escrow outcome.
+        pool.query(`SELECT COALESCE(SUM(inspection_fee),0) AS total
+                    FROM deals
+                    WHERE has_paid_inspection IS TRUE`),
       ]);
       res.json({
         total_users:       parseInt(users.rows[0].count),
@@ -371,6 +376,7 @@ const adminController = {
         completed_deals:   parseInt(deals.rows[0].count),
         verified_agents:   parseInt(agents.rows[0].count),
         total_revenue_ngn: parseInt(revenue.rows[0].total),
+        inspection_revenue_ngn: parseInt(inspectionRevenue.rows[0].total),
       });
     } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },

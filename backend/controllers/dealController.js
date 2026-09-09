@@ -2,7 +2,7 @@ const axios    = require('axios');
 const { pool } = require('../config/db');
 const { generateSwiftDoc } = require('./swiftdocController');
 const { escapeHtml }        = require('../utils/escapeHtml');
-const { computeDealAmounts } = require('../utils/money');
+const { computeDealAmounts, dealHoldsReservation, inspectionSatisfied, requiresInspectionFee } = require('../utils/money');
 const { handleEmail } = require('../utils/emailService');
 
 // ── PAYSTACK HELPERS ─────────────────────────────────────────────────────────
@@ -10,6 +10,30 @@ const paystackHeaders = {
   Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
   'Content-Type': 'application/json',
 };
+
+// Reserve the listing for a deal whose inspection gate is satisfied
+// (paid, skipped, or no fee). Deferred reservation: the listing stays open
+// while tenants inspect — first to satisfy the gate wins the reservation.
+// Room-share uses an atomic guarded increment; full slots return ok:false.
+// Safe to call with pool or a txn client; no row locks taken (the rent-approve
+// double-booking guard remains the final arbiter).
+async function reserveListingForDeal(queryable, deal) {
+  if (deal.is_room_share_deal) {
+    const r = await queryable.query(
+      `UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1, updated_at=NOW()
+       WHERE id=$1 AND room_share_slots_filled < room_share_slots RETURNING id`,
+      [deal.listing_id]
+    );
+    if (!r.rows.length) return { reserved: false, reason: 'slots_full' };
+    return { reserved: true };
+  }
+  const r = await queryable.query(
+    `UPDATE listings SET is_available=false, updated_at=NOW() WHERE id=$1 AND is_available=true RETURNING id`,
+    [deal.listing_id]
+  );
+  if (!r.rows.length) return { reserved: false, reason: 'already_held' };
+  return { reserved: true };
+}
 
 // Generate the SwiftDoc, deliver it, and record the outcome on the deal — runs in the
 // BACKGROUND after the payment response is already sent, so the slow AI + PDF + upload work
@@ -142,14 +166,17 @@ const initiateDeal = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Get listing details with row lock to prevent slot race conditions
+    // Get listing details with row lock to prevent slot race conditions.
+    // Do NOT filter by is_available here — the holder of an inspection-paid
+    // hold (is_available=false) must be able to resume their booking after
+    // a refresh, while strangers are still blocked below.
     const listingResult = await client.query(
-      'SELECT * FROM listings WHERE id=$1 AND is_available=true FOR UPDATE',
+      'SELECT * FROM listings WHERE id=$1 FOR UPDATE',
       [listing_id]
     );
     if (!listingResult.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Listing not found or unavailable.' });
+      return res.status(404).json({ error: 'Listing not found.' });
     }
     const listing = listingResult.rows[0];
 
@@ -173,11 +200,26 @@ const initiateDeal = async (req, res) => {
     );
     const reusable = existingResult.rows.find(d => !!d.is_room_share_deal === is_room_share_deal);
 
+    // Listing appears unavailable (held by inspection) — only the holder may continue.
+    // This fixes refresh → "Listing not found or unavailable" for the tenant who
+    // paid inspection and got the hold (is_available=false), while other tenants
+    // are still correctly blocked. Room-share holders bypass the same gate.
+    if (!listing.is_available) {
+      const holder = reusable && dealHoldsReservation(reusable);
+      if (!holder) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Listing is currently reserved by another tenant. If you already booked this property, check My Deals to continue your booking.' });
+      }
+    }
+
     let slots_filled = Number(listing.room_share_slots_filled) || 0;
     for (const old of existingResult.rows) {
       if (reusable && old.id === reusable.id) continue;
       await client.query("UPDATE deals SET status='archived', updated_at=NOW() WHERE id=$1", [old.id]);
-      if (old.is_room_share_deal && slots_filled > 0) {
+      // Only release a slot the archived deal actually held: pre-inspection
+      // deals (fee required but neither paid nor skipped) never reserved one.
+      // Pre-feature rows (fee 0) always held, matching the old behavior.
+      if (old.is_room_share_deal && dealHoldsReservation(old) && slots_filled > 0) {
         await client.query(
           'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
           [listing_id]
@@ -228,6 +270,11 @@ const initiateDeal = async (req, res) => {
       ? Number(listing.southswift_fee_percent) : southswift_fee_percent;
     const listing_total_fee_percent = listing.total_fee_percent != null
       ? Number(listing.total_fee_percent) : total_fee_percent;
+    // Inspection fee snapshot — frozen per deal so later listing edits can't
+    // rewrite history. Pre-migration rows fall back to 0 (feature didn't exist).
+    const listing_inspection_fee = listing.inspection_fee != null
+      ? Math.max(0, Math.min(5000, Math.round(Number(listing.inspection_fee))))
+      : 0;
 
     let deal;
     // Only overwrite swiftdoc_data on retry when the wizard actually re-sent it — the
@@ -235,20 +282,38 @@ const initiateDeal = async (req, res) => {
     // whatever was captured the first time.
     const swiftdoc_data_json = swiftdoc_data ? JSON.stringify(swiftdoc_data) : null;
     if (reusable) {
-      // Refresh the existing deal — repairs old ₦0 / stale-total rows on retry too
+      // Refresh the existing deal — repairs old ₦0 / stale-total rows on retry too.
+      // Inspection snapshot refreshes as well, but NEVER clears an already-paid
+      // inspection (paid money/state is never rewritten by a retry).
       const updated = await client.query(
         `UPDATE deals SET rent_amount=$1, service_fee_tenant=$2, service_fee_landlord=$3,
            total_paid=$4, move_in_date=$5, lease_duration_months=$6, status='initiated',
            agent_fee_percent=$7, southswift_fee_percent=$8, total_fee_percent=$9,
-           swiftdoc_data=COALESCE($10::jsonb, swiftdoc_data), updated_at=NOW()
-         WHERE id=$11 RETURNING *`,
+           inspection_fee = CASE WHEN has_paid_inspection THEN inspection_fee ELSE $10 END,
+           swiftdoc_data=COALESCE($11::jsonb, swiftdoc_data), updated_at=NOW()
+         WHERE id=$12 RETURNING *`,
         [rent_amount, service_fee_tenant, service_fee_landlord, total_paid,
          move_in_date, lease_duration_months,
          listing_agent_fee_percent, listing_southswift_fee_percent, listing_total_fee_percent,
+         listing_inspection_fee,
          swiftdoc_data_json, reusable.id]
       );
       deal = updated.rows[0];
       room_share_slot_number = deal.room_share_slot_number;
+      // Reusable room-share deal that JUST satisfied the gate (paid/skipped
+      // since its last refresh) claims its slot now — exactly once, since the
+      // pre-update `reusable` row was still unsatisfied. Already-holding deals
+      // (satisfied before) must not double-claim.
+      if (is_room_share_deal && inspectionSatisfied(deal) && !inspectionSatisfied(reusable)) {
+        const claimed = await client.query(
+          'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1 AND room_share_slots_filled < room_share_slots RETURNING id',
+          [listing_id]
+        );
+        if (!claimed.rows.length) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'All room share slots are filled for this listing.' });
+        }
+      }
     } else {
       if (is_room_share_deal) room_share_slot_number = slots_filled + 1;
 
@@ -257,23 +322,35 @@ const initiateDeal = async (req, res) => {
          (listing_id, tenant_id, agent_id, rent_amount, service_fee_tenant,
           service_fee_landlord, total_paid, status, move_in_date, lease_duration_months,
           is_room_share_deal, room_share_slot_number, swiftdoc_data,
-          agent_fee_percent, southswift_fee_percent, total_fee_percent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11,$12::jsonb,$13,$14,$15) RETURNING *`,
+          agent_fee_percent, southswift_fee_percent, total_fee_percent, inspection_fee)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'initiated',$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16) RETURNING *`,
         [listing_id, req.user.id, listing.agent_id, rent_amount,
          service_fee_tenant, service_fee_landlord, total_paid,
          move_in_date, lease_duration_months,
          is_room_share_deal, room_share_slot_number, swiftdoc_data_json,
-         listing_agent_fee_percent, listing_southswift_fee_percent, listing_total_fee_percent]
+         listing_agent_fee_percent, listing_southswift_fee_percent, listing_total_fee_percent,
+         listing_inspection_fee]
       );
       deal = dealResult.rows[0];
 
-      // Increment room_share_slots_filled atomically within the transaction
-      if (is_room_share_deal) {
+      // Deferred reservation: the slot is claimed only once the inspection
+      // gate is satisfied (paid/skipped) or when no inspection applies.
+      // Inspecting tenants share open slots; first to satisfy the gate wins.
+      if (is_room_share_deal && inspectionSatisfied(deal)) {
         await client.query(
           'UPDATE listings SET room_share_slots_filled = room_share_slots_filled + 1 WHERE id=$1 AND room_share_slots_filled < room_share_slots',
           [listing_id]
         );
       }
+    }
+
+    // Final-booking gate: calls carrying swiftdoc_data are finishing the
+    // booking (rent payment next), so an unsatisfied inspection blocks them.
+    // Creation calls (no swiftdoc_data — e.g. entering the inspection step)
+    // pass through so the deal exists to carry inspection state.
+    if (swiftdoc_data && listing_inspection_fee > 0 && !inspectionSatisfied(deal)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Please complete the inspection step first.' });
     }
 
     await client.query('COMMIT');
@@ -291,10 +368,13 @@ const initiateDeal = async (req, res) => {
       if (!account_name || !account_number || !bank_name) {
         return res.status(503).json({ error: 'SouthSwift bank account is not configured. Please contact support.' });
       }
-      // Reserve the apartment immediately (non-room-share) so a second tenant cannot
-      // initiate a competing deal while this one is being paid. Room-share already
-      // reserved a slot above. The WHERE keeps re-initiation idempotent.
-      if (!is_room_share_deal) {
+      // Reserve the apartment on the FINAL booking call only (swiftdoc_data
+      // present = tenant is paying rent next). Creation calls for
+      // inspection-required listings leave the listing open so other tenants
+      // can inspect concurrently; the inspection payment/skip reserves it.
+      // The WHERE keeps re-initiation idempotent. Room-share slots are handled
+      // above / at inspection satisfaction.
+      if (!is_room_share_deal && inspectionSatisfied(deal)) {
         await pool.query('UPDATE listings SET is_available=false WHERE id=$1 AND is_available=true', [listing_id]);
       }
       await pool.query("UPDATE deals SET payment_mode='manual', status='payment_pending', updated_at=NOW() WHERE id=$1", [deal.id]);
@@ -321,7 +401,20 @@ const initiateDeal = async (req, res) => {
       return;
     }
 
-    // Initiate Paystack payment
+    // Initiate Paystack payment.
+    // Creation calls for inspection-required listings (no swiftdoc_data yet,
+    // gate unsatisfied) must NOT open a rent charge — the tenant is heading
+    // into the inspection step. Return the deal so the wizard can continue.
+    if (!swiftdoc_data && listing_inspection_fee > 0 && !inspectionSatisfied(deal)) {
+      await pool.query("UPDATE deals SET payment_mode='paystack', status='payment_pending', updated_at=NOW() WHERE id=$1", [deal.id]);
+      return res.json({
+        deal_id: deal.id,
+        payment_mode: 'paystack',
+        inspection_required: true,
+        inspection_fee: listing_inspection_fee,
+        message: 'Booking started. Complete the inspection step to continue.',
+      });
+    }
     const paystackRes = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
@@ -434,7 +527,7 @@ const verifyPayment = async (req, res) => {
       "UPDATE deals SET status='escrow_held', paystack_reference=$2, updated_at=NOW() WHERE id=$1 AND status IN ('payment_pending','initiated') RETURNING *",
       [pendingDeal.id, reference]
     );
-    if (!dealResult.rows.length) return res.status(400).json({ error: 'Payment already verified for this deal.' });
+    if (!dealResult.rows.length) return res.status(400).json({ error: 'Payment already verified for this deal, or the booking hold expired — please check your deal status or start a fresh booking.' });
     const deal = dealResult.rows[0];
 
     // Get listing and tenant info
@@ -456,6 +549,229 @@ const verifyPayment = async (req, res) => {
     return;
   } catch (err) {
     console.error(err.message); res.status(500).json({ error: 'Something went wrong.' });
+  }
+};
+
+// POST /api/deals/:id/skip-inspection — tenant bypasses inspection (direct-pay).
+// Tenant self-serve; recorded on the deal (skipped + timestamp) for audit so
+// paid / skipped / pending stay distinguishable. Final: cannot skip after
+// paying, cannot pay after skipping (DB CHECK enforces). Skipping reserves the
+// listing like a paid inspection (deferred reservation).
+const skipInspection = async (req, res) => {
+  try {
+    const dealResult = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
+    if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    const deal = dealResult.rows[0];
+    if (deal.tenant_id !== req.user.id)
+      return res.status(403).json({ error: 'Only the tenant can skip inspection on this deal.' });
+    if (deal.has_paid_inspection || deal.inspection_skipped)
+      return res.status(400).json({ error: 'Inspection already resolved for this deal.' });
+    if (!requiresInspectionFee(deal))
+      return res.status(400).json({ error: 'This listing has no inspection fee to skip.' });
+    if (!['initiated', 'payment_pending'].includes(deal.status))
+      return res.status(400).json({ error: `Cannot skip inspection at status: ${deal.status}.` });
+
+    // Guard: cannot skip into a hold if property already booked or held by another inspection
+    const listingCheck = await pool.query('SELECT is_available, is_room_share FROM listings WHERE id=$1', [deal.listing_id]);
+    if (!listingCheck.rows.length) return res.status(404).json({ error: 'Listing not found.' });
+    const listingAvail = listingCheck.rows[0];
+    const bookedCheck = await pool.query(
+      `SELECT 1 FROM deals WHERE listing_id=$1 AND id<>$2 AND status IN ('escrow_held','docs_generated','movein_pending','completed','disputed') LIMIT 1`,
+      [deal.listing_id, deal.id]
+    );
+    if (bookedCheck.rows.length) return res.status(409).json({ error: 'Listing is already booked. Cannot skip inspection for this property.' });
+    if (!deal.is_room_share_deal && !listingAvail.is_available) {
+      return res.status(409).json({ error: 'Listing is currently reserved by another tenant. Cannot continue.' });
+    }
+
+    const updated = await pool.query(
+      `UPDATE deals SET inspection_skipped=true, inspection_skipped_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND has_paid_inspection=false AND inspection_skipped=false RETURNING *`,
+      [deal.id]
+    );
+    if (!updated.rows.length) return res.status(400).json({ error: 'Inspection already resolved for this deal.' });
+    const skipped = updated.rows[0];
+
+    const reservation = await reserveListingForDeal(pool, skipped);
+    if (!reservation.reserved) {
+      await pool.query(
+        `UPDATE deals SET inspection_skipped=false, inspection_skipped_at=NULL, updated_at=NOW() WHERE id=$1`,
+        [deal.id]
+      );
+      const alreadyHeld = reservation.reason === 'already_held';
+      return res.status(409).json({ error: alreadyHeld ? 'Listing is currently reserved by another tenant. Cannot continue.' : 'All room share slots are filled — cannot continue booking.' });
+    }
+    res.json({ message: 'Inspection skipped. Continue your booking.', deal_id: deal.id });
+  } catch (err) {
+    console.error('skipInspection error:', err.message);
+    res.status(500).json({ error: 'Something went wrong.' });
+  }
+};
+
+// ── INSPECTION FEE PAYMENT ──────────────────────────────────────────────
+// Inspection is SouthSwift revenue (non-refundable), paid per deal BEFORE the
+// rent escrow. Paying (or skipping) it RESERVES the listing (deferred
+// reservation) — the listing stays open while tenants inspect. It never flips
+// deal.status. The fee snapshot comes from the deal row (frozen at initiate).
+
+// POST /api/deals/:id/pay-inspection — get amount due + pay instructions
+const payInspection = async (req, res) => {
+  try {
+    const dealResult = await pool.query('SELECT * FROM deals WHERE id=$1', [req.params.id]);
+    if (!dealResult.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    const deal = dealResult.rows[0];
+    if (![deal.tenant_id, deal.agent_id].includes(req.user.id) && req.user.role !== 'admin')
+      return res.status(403).json({ error: 'Not authorised to view this deal.' });
+    if (deal.has_paid_inspection || deal.inspection_skipped)
+      return res.status(400).json({ error: 'Inspection already resolved for this deal.' });
+    const fee = Number(deal.inspection_fee) || 0;
+    if (fee <= 0) return res.status(400).json({ error: 'This listing has no inspection fee.' });
+    if (!['initiated', 'payment_pending'].includes(deal.status))
+      return res.status(400).json({ error: `Inspection can only be paid before rent escrow (status: ${deal.status}).` });
+
+    const paymentProvider = (process.env.PAYMENT_PROVIDER || 'manual').toLowerCase();
+    const usePaystack = paymentProvider === 'paystack' && process.env.PAYSTACK_SECRET_KEY;
+    if (!usePaystack) {
+      const account_name   = process.env.SS_ACCOUNT_NAME;
+      const account_number = process.env.SS_ACCOUNT_NUMBER;
+      const bank_name      = process.env.SS_BANK_NAME;
+      if (!account_name || !account_number || !bank_name)
+        return res.status(503).json({ error: 'SouthSwift bank account is not configured. Please contact support.' });
+      return res.json({
+        deal_id: deal.id,
+        payment_mode: 'manual',
+        amount_due: fee,
+        account: { account_name, account_number, bank_name },
+        breakdown: {
+          inspection_fee: `₦${fee.toLocaleString()}`,
+          note: 'Non-refundable. Covers one scheduled inspection visit. Does not reserve the property.',
+        },
+      });
+    }
+
+    const paystackRes = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: req.user.email,
+        amount: fee * 100, // kobo
+        reference: `SS-INSP-${deal.id}-${Date.now()}`,
+        metadata: {
+          deal_id: deal.id,
+          listing_id: deal.listing_id,
+          tenant_id: deal.tenant_id,
+          purpose: 'inspection',
+        },
+        callback_url: `${process.env.CLIENT_URL}/deals/${deal.id}?inspection=1`,
+      },
+      { headers: paystackHeaders }
+    );
+    const { authorization_url, access_code, reference } = paystackRes.data.data;
+    res.json({ deal_id: deal.id, payment_url: authorization_url, paystack_reference: reference, amount_due: fee });
+  } catch (err) {
+    console.error('payInspection error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to start inspection payment. Please try again.' });
+  }
+};
+
+// POST /api/deals/verify-inspection-payment — Paystack verify for inspection
+const verifyInspectionPayment = async (req, res) => {
+  const { reference } = req.body;
+  if (!reference) return res.status(400).json({ error: 'Payment reference required.' });
+  try {
+    const paystackRes = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      { headers: paystackHeaders }
+    );
+    const { status, metadata, amount, currency } = paystackRes.data.data;
+    if (status !== 'success') return res.status(400).json({ error: 'Payment not successful.' });
+    const deal_id = metadata?.deal_id;
+    if (!deal_id) return res.status(400).json({ error: 'Invalid payment reference.' });
+    const dealCheck = await pool.query('SELECT * FROM deals WHERE id=$1', [deal_id]);
+    if (!dealCheck.rows.length) return res.status(404).json({ error: 'Deal not found.' });
+    const deal = dealCheck.rows[0];
+    if (req.user && ![deal.tenant_id, deal.agent_id].includes(req.user.id) && req.user.role !== 'admin')
+      return res.status(403).json({ error: 'Not authorised.' });
+    if (metadata?.purpose !== 'inspection')
+      return res.status(400).json({ error: 'This reference is not an inspection payment.' });
+    if (deal.has_paid_inspection || deal.inspection_skipped)
+      return res.status(400).json({ error: 'Inspection already resolved for this deal.' });
+    const expectedKobo = Number(deal.inspection_fee) * 100;
+    if (!Number.isFinite(expectedKobo) || Number(amount) !== expectedKobo || (currency && currency !== 'NGN'))
+      return res.status(400).json({ error: 'Payment amount mismatch. Contact support.' });
+    // Guard: reject if listing already booked or held via another inspection
+    const listingAvailCheck = await pool.query('SELECT is_available FROM listings WHERE id=$1', [deal.listing_id]);
+    const lAvail = listingAvailCheck.rows[0];
+    if (lAvail) {
+      const bookedCheckV = await pool.query(
+        `SELECT 1 FROM deals WHERE listing_id=$1 AND id<>$2 AND status IN ('escrow_held','docs_generated','movein_pending','completed','disputed') LIMIT 1`,
+        [deal.listing_id, deal.id]
+      );
+      if (bookedCheckV.rows.length) return res.status(409).json({ error: 'Listing is already booked. Inspection cannot be confirmed. Please contact support for refund.' });
+      if (!deal.is_room_share_deal && !lAvail.is_available) return res.status(409).json({ error: 'Listing is currently reserved by another tenant. Please contact support for refund.' });
+    }
+    const updated = await pool.query(
+      `UPDATE deals SET has_paid_inspection=true, inspection_paid_at=NOW(),
+        inspection_reference=$2, updated_at=NOW()
+       WHERE id=$1 AND has_paid_inspection=false AND inspection_skipped=false
+         AND status IN ('initiated','payment_pending') RETURNING *`,
+      [deal.id, reference]
+    );
+    if (!updated.rows.length) return res.status(400).json({ error: 'Inspection can no longer be paid on this deal.' });
+    const paidDeal = updated.rows[0];
+
+    // Deferred reservation: paying the inspection claims the listing/slot.
+    const reservation = await reserveListingForDeal(pool, paidDeal);
+    if (!reservation.reserved) {
+      await pool.query(
+        `UPDATE deals SET has_paid_inspection=false, inspection_paid_at=NULL,
+          inspection_reference=NULL, updated_at=NOW() WHERE id=$1`,
+        [deal.id]
+      );
+      const alreadyHeldV = reservation.reason === 'already_held';
+      await handleEmail({
+        to: process.env.ADMIN_EMAIL || 'ceo@southswift.com.ng',
+        subject: ' ADMIN ACTION REQUIRED: Inspection Paid but Unavailable',
+        html: `<p>Deal <code>${deal.id}</code> paid inspection ref <code>${reference}</code> but ${alreadyHeldV ? 'listing is already held by another inspection' : 'all room-share slots are filled'}. Please refund the tenant manually via Paystack dashboard.</p>`,
+      }).catch(() => {});
+      return res.status(409).json({ error: alreadyHeldV ? 'Listing is currently reserved by another tenant. Contact support for an inspection refund.' : 'All room share slots are filled. Contact support for an inspection refund.' });
+    }
+
+    res.json({ message: '✅ Inspection fee confirmed.', deal_id: deal.id });
+
+    // Notify tenant + agent + admin (best-effort, non-blocking).
+    (async () => {
+      try {
+        const listingRes = await pool.query('SELECT title FROM listings WHERE id=$1', [deal.listing_id]);
+        const tenantRes  = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.tenant_id]);
+        const agentRes   = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [deal.agent_id]);
+        const listing = listingRes.rows[0] || {};
+        const tenant  = tenantRes.rows[0] || {};
+        const agent   = agentRes.rows[0] || {};
+        const fee = Number(deal.inspection_fee).toLocaleString();
+        if (tenant.email) {
+          await handleEmail({
+            to: tenant.email,
+            subject: '🔍 SouthSwift — Inspection Fee Confirmed',
+            html: `<h2>Inspection fee confirmed</h2><p>Dear ${escapeHtml(tenant.full_name)},</p><p>Your inspection fee of <strong>₦${fee}</strong> for <strong>${escapeHtml(listing.title || '')}</strong> is confirmed (ref <code>${reference}</code>).</p><p>This fee is non-refundable. Continue your booking to complete documentation and rent payment.</p>`,
+          });
+        }
+        if (agent.email) {
+          await handleEmail({
+            to: agent.email,
+            subject: ' SouthSwift — Tenant Paid Inspection Fee',
+            html: `<h2>Inspection fee paid</h2><p>Dear ${escapeHtml(agent.full_name)},</p><p><strong>${escapeHtml(tenant.full_name || '')}</strong> paid the <strong>₦${fee}</strong> inspection fee for <strong>${escapeHtml(listing.title || '')}</strong> (Deal <code>${deal.id.slice(0, 8)}</code>). The listing is now reserved for their booking.</p>`,
+          });
+        }
+        await handleEmail({
+          to: process.env.ADMIN_EMAIL || 'ceo@southswift.com.ng',
+          subject: '🔍 ADMIN: Inspection Fee Paid (Paystack)',
+          html: `<p>Deal <code>${deal.id}</code> — inspection <strong>₦${fee}</strong> paid via Paystack (ref <code>${reference}</code>). Revenue recognised.</p>`,
+        });
+      } catch (e) { console.error('inspection verify notify error:', e.message); }
+    })();
+  } catch (err) {
+    console.error('verifyInspectionPayment error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Something went wrong.' });
   }
 };
 
@@ -641,6 +957,8 @@ const raiseDispute = async (req, res) => {
 
 // Fee split is agent/admin-only: tenants see base rent + total, never the
 // percent columns or the agent-side naira fee.
+// Inspection fields (inspection_fee, has_paid_inspection, ...) stay visible to
+// both parties — the tenant must know the price and their own payment state.
 const sanitizeDealForRole = (deal, user) => {
   if (!deal || typeof deal !== 'object') return deal;
   if (user && ['agent', 'admin'].includes(user.role)) return deal;
@@ -732,23 +1050,28 @@ const cancelDeal = async (req, res) => {
       [reason, req.user.id, req.params.id]
     );
 
-    // Release the room share slot — a state change, so finish it before responding
-    if (deal.is_room_share_deal) {
-      await pool.query(
-        'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
-        [deal.listing_id]
-      );
-    } else {
-      // Non-room-share: this deal held the reservation (is_available=false). Release it
-      // back to available unless another deal on the listing is already booked.
-      await pool.query(
-        `UPDATE listings SET is_available=true WHERE id=$1
-         AND NOT EXISTS (
-           SELECT 1 FROM deals d
-           WHERE d.listing_id=$1 AND d.status IN ('escrow_held','docs_generated','movein_pending','completed','disputed')
-         )`,
-        [deal.listing_id]
-      );
+    // Release the reservation — but only if this deal held one. Pre-inspection
+    // deals (fee required, neither paid nor skipped) never reserved anything;
+    // freeing here would drop another tenant's hold (or corrupt slot counts).
+    if (dealHoldsReservation(deal)) {
+      // Release the room share slot — a state change, so finish it before responding
+      if (deal.is_room_share_deal) {
+        await pool.query(
+          'UPDATE listings SET room_share_slots_filled = GREATEST(room_share_slots_filled - 1, 0) WHERE id=$1',
+          [deal.listing_id]
+        );
+      } else {
+        // Non-room-share: this deal held the reservation (is_available=false). Release it
+        // back to available unless another deal on the listing is already booked.
+        await pool.query(
+          `UPDATE listings SET is_available=true WHERE id=$1
+           AND NOT EXISTS (
+             SELECT 1 FROM deals d
+             WHERE d.listing_id=$1 AND d.status IN ('escrow_held','docs_generated','movein_pending','completed','disputed')
+           )`,
+          [deal.listing_id]
+        );
+      }
     }
 
     // Respond immediately. Notification emails are best-effort and must NOT block
@@ -775,4 +1098,4 @@ const cancelDeal = async (req, res) => {
   }
 };
 
-module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal, runSwiftDocBackground, sanitizeDealForRole };
+module.exports = { initiateDeal, verifyPayment, confirmMoveIn, raiseDispute, cancelDeal, getMyDeals, getDeal, runSwiftDocBackground, sanitizeDealForRole, payInspection, verifyInspectionPayment, skipInspection, reserveListingForDeal };

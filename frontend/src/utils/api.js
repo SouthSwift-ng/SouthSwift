@@ -99,6 +99,11 @@ export const cancelDeal    = (dealId, reason) => API.post(`/deals/${dealId}/canc
 export const getMyDeals    = ()             => API.get('/deals/my');
 export const getDeal       = (id)           => API.get(`/deals/${id}`);
 
+// ── INSPECTION FEE ────────────────────────────────────────────────────────────
+export const payInspection           = (dealId)    => API.post(`/deals/${dealId}/pay-inspection`);
+export const verifyInspectionPayment = (reference) => API.post('/deals/verify-inspection-payment', { reference });
+export const skipInspection          = (dealId)    => API.post(`/deals/${dealId}/skip-inspection`);
+
 // ── MANUAL BANK TRANSFER (PAYMENT_PROVIDER=manual) ────────────────────────────
 export const getCompanyAccount = ()              => API.get('/payments/account');
 export const getNigerianBanks   = ()              => API.get('/payments/banks');
@@ -107,7 +112,8 @@ export const submitTransfer    = (formData)      =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 60000,
   });
-export const getMyTransaction  = (dealId)        => API.get(`/payments/transaction/${dealId}`);
+export const getMyTransaction  = (dealId, payment_type) =>
+  API.get(`/payments/transaction/${dealId}`, { params: payment_type ? { payment_type } : {} });
 
 // True only for genuine Paystack checkout URLs. Paystack returns
 // https://checkout.paystack.com/... — note the .com, not .co.

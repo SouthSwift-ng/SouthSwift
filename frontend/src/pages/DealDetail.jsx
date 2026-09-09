@@ -8,7 +8,7 @@ import {
   createListing, updateListing, getListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
   getAgent, submitReview, getAgentReviews, getWaitlist,
-  getAllListings, deleteListingsBulk
+  getAllListings, deleteListingsBulk, verifyInspectionPayment
 } from '../utils/api';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
@@ -79,6 +79,7 @@ function BankSelect({ banks, value, onChange, inputStyle }) {
 export function DealDetail() {
   const { id }          = useParams();
   const { user }        = useAuth();
+  const navigate          = useNavigate();
   const [deal, setDeal] = useState(null);
   const [loading, setL] = useState(true);
   const [reason, setR]  = useState('');
@@ -129,21 +130,29 @@ export function DealDetail() {
 
   // Returning from Paystack — the callback appends ?reference=...&trxref=...
   // Verify the payment, then refresh the deal so the progress + badge update.
-  // The webhook is the server-side backup; "already verified" is not an error.
+  // ?inspection=1 marks an inspection-fee return (verified against the deal's
+  // inspection snapshot, never the rent total). The webhook is the server-side
+  // backup; "already verified" is not an error.
   // Effect must depend on id + the reference so navigating to a DIFFERENT deal's
   // callback URL re-runs the verification — previously empty deps meant only the
   // first mount verified, and a second deal's ?reference=... was ignored.
   useEffect(() => {
     const reference = searchParams.get('reference') || searchParams.get('trxref');
     if (!reference) return;
+    const isInspection = searchParams.get('inspection') === '1';
     let active = true;
     (async () => {
       try {
-        await verifyPayment(reference);
-        if (active) toast.success('Payment confirmed — funds secured in SwiftShield escrow. 🛡️');
+        if (isInspection) {
+          await verifyInspectionPayment(reference);
+          if (active) toast.success('Inspection fee confirmed — continue your booking. 🔍');
+        } else {
+          await verifyPayment(reference);
+          if (active) toast.success('Payment confirmed — funds secured in SwiftShield escrow. 🛡️');
+        }
       } catch (err) {
         const msg = err.response?.data?.error;
-        if (active && msg && !/already verified/i.test(msg)) toast.error(msg);
+        if (active && msg && !/already verified|already marked as paid/i.test(msg)) toast.error(msg);
       } finally {
         if (active) {
           getDeal(id).then(r => setDeal(r.data)).catch(() => {});
@@ -298,6 +307,13 @@ export function DealDetail() {
                 const rows = [
                   ['Rent Amount',`₦${formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))}`],
                 ];
+                // Inspection fee is tenant-facing (price + own payment state) —
+                // unlike the 2.5% split, it is never stripped.
+                 if (Number(deal.inspection_fee) > 0) {
+                   const inspStatus = deal.has_paid_inspection ? 'Paid ✅' : deal.inspection_skipped ? 'Skipped ⏭️' : 'Unpaid';
+                   rows.push(['Inspection Fee',
+                     `₦${formatNaira(deal.inspection_fee)} — ${inspStatus}`]);
+                 }
                 // Fee split is agent/admin-only: tenants see rent + total, never charges.
                 if (isStaff && deal.agent_fee_percent != null) {
                   if (deal.service_fee_tenant != null)
@@ -320,6 +336,26 @@ export function DealDetail() {
                 ));
               })()}
             </div>
+
+            {/* Inspection paid or skipped but rent not yet in escrow — route the tenant back
+                into the listing wizard to finish booking. */}
+            {isTenant && Number(deal.inspection_fee) > 0 && (deal.has_paid_inspection || deal.inspection_skipped) &&
+              ['initiated', 'payment_pending'].includes(deal.status) && (
+              <div style={ps.infoCard}>
+                <h3 style={ps.cardTitle}>
+                  {deal.inspection_skipped ? ' Inspection Skipped' : ' Inspection Paid'}
+                </h3>
+                <p style={{fontSize:12.5, color:'#555', margin:'0 0 12px'}}>
+                  {deal.inspection_skipped
+                    ? 'You skipped the inspection. Continue your booking to pay rent directly.'
+                    : 'Your inspection fee is confirmed. Continue your booking to complete documentation and rent payment.'}
+                </p>
+                <button onClick={() => navigate(`/listings/${deal.listing_id}?resume=1`)}
+                  style={{...ps.confirmBtn, width:'100%'}}>
+                  Continue Booking →
+                </button>
+              </div>
+            )}
 
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Parties</h3>
@@ -557,6 +593,7 @@ export function CreateListing() {
     address: '', city: '', state: '', amenities: '',
     latitude: null, longitude: null,
     is_room_share: false, room_share_price_per_person: '', room_share_slots: 2,
+    inspection_fee: '3000',
     is_available:true
   });
   const [loading, setL]          = useState(false);
@@ -592,7 +629,10 @@ export function CreateListing() {
           is_room_share: !!l.is_room_share,
           room_share_price_per_person: l.room_share_price_per_person ?? '',
           room_share_slots: l.room_share_slots ?? 2,
+          inspection_fee: l.inspection_fee ?? 3000,
           is_available: l.is_available,
+          rent_price:l.rent_price
+
         });
         setAddrQuery(l.address || '');
         setImageItems((Array.isArray(l.images) ? l.images : []).map(url => ({ uid: ++uidRef.current, url })));
@@ -673,6 +713,18 @@ export function CreateListing() {
     if (form.is_room_share && !(Number(form.room_share_price_per_person) > 0)) {
       toast.error('Please set a price per person for the room share.');
       return;
+    }
+    // Inspection fee: agent-set, capped at ₦5,000. Blank defaults to ₦3,000 server-side.
+    if (form.inspection_fee !== '' && form.inspection_fee !== null && form.inspection_fee !== undefined) {
+      const insp = Number(form.inspection_fee);
+      if (!Number.isFinite(insp) || insp < 0 || Math.round(insp) !== insp) {
+        toast.error('Inspection fee must be a whole-naira amount of ₦0 or more.');
+        return;
+      }
+      if (insp > 5000) {
+        toast.error('Inspection fee must not exceed ₦5,000.');
+        return;
+      }
     }
     setL(true);
     try {
@@ -774,6 +826,17 @@ export function CreateListing() {
             <input style={ps.input} type="number" value={form.rent_price} placeholder="800000"
               onChange={e => setForm(f => ({ ...f, rent_price: e.target.value }))}/>
         
+          </div>
+
+          {/* Inspection fee — agent-set, capped at ₦5,000. Blank/0 skips the inspection step for tenants. */}
+          <div>
+            <label style={ps.label}>Inspection Fee (₦)</label>
+            <input style={ps.input} type="number" min="0" max="5000" step="1"
+              value={form.inspection_fee} placeholder="3000"
+              onChange={e => setForm(f => ({ ...f, inspection_fee: e.target.value }))}/>
+            <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+              Max ₦5,000. Tenants pay this before booking (non-refundable, SouthSwift revenue). Set 0 to skip inspection.
+            </p>
           </div>
 
           {/* Room Share Toggle */}
@@ -963,18 +1026,21 @@ export function AdminPanel() {
 
   const handleBulkDelete = async () => {
     const ids = Array.from(selectedListings);
-    if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} listing(s)? Listings with completed or in-escrow deals will be skipped.`)) return;
+    if (!ids.length) { toast.error('No listings selected.'); return; }
+    if (ids.length > 5) { toast.error('You can delete at most 5 listings at once.'); return; }
+    toast.loading(`Deleting ${ids.length} listing(s)…`);
     setDeletingListings(true);
     try {
       const r = await deleteListingsBulk(ids);
       const msg = r.data.blocked_count
         ? `Deleted ${r.data.deleted_count}. Skipped ${r.data.blocked_count} (active deals).`
         : `Deleted ${r.data.deleted_count} listing(s).`;
+      toast.dismiss();
       toast.success(msg);
       setSelectedListings(new Set());
       await refreshAllListings();
     } catch (err) {
+      toast.dismiss();
       toast.error(err.response?.data?.error || 'Bulk delete failed.');
     }
     setDeletingListings(false);
