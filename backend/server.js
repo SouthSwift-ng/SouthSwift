@@ -3,7 +3,7 @@ const express      = require('express');
 const cors         = require('cors');
 const compression  = require('compression');
 const helmet       = require('helmet');
-const { pool, initDB, releaseStaleReservations } = require('./config/db');
+const { pool, initDB, releaseStaleReservations, releaseExpiredInspectionHolds } = require('./config/db');
 const { initRedis } = require('./config/redis');
 
 // ── PROCESS-LEVEL SAFETY NET — a single stray async error must not kill the worker ──
@@ -29,6 +29,7 @@ const reviewRoutes  = require('./routes/reviews');
 const waitlistRoutes= require('./routes/waitlist');
 const clientFunnelRoutes = require('./routes/clientFunnel');
 const feedbackRoutes = require('./routes/feedback');
+const shareRoutes = require('./routes/share');
 
 const rateLimit = require('express-rate-limit');
 
@@ -187,6 +188,7 @@ app.use('/api/reviews',  reviewRoutes);
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/client-funnel', clientFunnelRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/share', shareRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -204,8 +206,11 @@ app.listen(PORT, async () => {
   console.log(`🛡️  SouthSwift backend running on port ${PORT}`);
   await initDB();
   await initRedis();
-  // Release manual-transfer reservations whose tenant never submitted proof in time.
+  // Release manual-transfer reservations whose tenant never submitted proof in time,
+  // plus inspection holds whose rent never arrived within INSPECTION_HOLD_TIMEOUT_HOURS.
   // Run once shortly after boot, then every 15 minutes.
   setTimeout(releaseStaleReservations, 60 * 1000).unref?.();
   setInterval(releaseStaleReservations, 15 * 60 * 1000);
+  setTimeout(releaseExpiredInspectionHolds, 90 * 1000).unref?.();
+  setInterval(releaseExpiredInspectionHolds, 15 * 60 * 1000);
 });

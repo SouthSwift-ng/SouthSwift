@@ -96,7 +96,12 @@ const buildInitSqlStatements = () => `
     room_share_price_per_person BIGINT,
     room_share_slots           INTEGER DEFAULT 1,
     room_share_slots_filled    INTEGER DEFAULT 0,
-    videos                     TEXT[]
+    videos                     TEXT[],
+    agent_fee_percent          DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    southswift_fee_percent     DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    total_fee_percent          DECIMAL(5,2) NOT NULL DEFAULT 5.00,
+    inspection_fee             BIGINT NOT NULL DEFAULT 3000
+                             CHECK (inspection_fee >= 0 AND inspection_fee <= 5000)
   );
 
   -- DEALS TABLE (SwiftShield Escrow Transactions)
@@ -110,6 +115,19 @@ const buildInitSqlStatements = () => `
     service_fee_tenant      BIGINT NOT NULL,
     service_fee_landlord    BIGINT NOT NULL,
     total_paid              BIGINT NOT NULL,
+    agent_fee_percent       DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    southswift_fee_percent  DECIMAL(5,2) NOT NULL DEFAULT 2.50,
+    total_fee_percent       DECIMAL(5,2) NOT NULL DEFAULT 5.00,
+    inspection_fee          BIGINT NOT NULL DEFAULT 0
+                            CHECK (inspection_fee >= 0 AND inspection_fee <= 5000),
+    has_paid_inspection     BOOLEAN NOT NULL DEFAULT false,
+    inspection_paid_at      TIMESTAMP,
+    inspection_reference    VARCHAR(255),
+    inspection_skipped      BOOLEAN NOT NULL DEFAULT false,
+    inspection_skipped_at   TIMESTAMP,
+    CONSTRAINT deals_inspection_state_check CHECK (
+      NOT (has_paid_inspection AND inspection_skipped)
+    ),
     status                  VARCHAR(30) DEFAULT 'initiated'
                             CHECK (status IN (
                               'initiated','payment_pending','escrow_held',
@@ -188,6 +206,8 @@ const buildInitSqlStatements = () => `
     deal_id                UUID REFERENCES deals(id) ON DELETE CASCADE,
     reference              VARCHAR(64) UNIQUE NOT NULL,
     tenant_id              UUID REFERENCES users(id),
+    payment_type           VARCHAR(20) NOT NULL DEFAULT 'rent'
+                           CHECK (payment_type IN ('rent','inspection')),
     amount_expected_naira  BIGINT NOT NULL,
     amount_naira           BIGINT,
     payer_bank             VARCHAR(100),
@@ -319,6 +339,129 @@ const initDB = async () => {
         ADD COLUMN IF NOT EXISTS email_error TEXT;
     `);
 
+    // ── FEE AUDIT COLUMNS (fixed 2.5% agent + 2.5% SouthSwift = 5% total) ──
+    // Backend is the source of truth: percentages are written server-side on
+    // upload and snapshotted onto deals. rent_price stays the base (e.g. 800k);
+    // tenant total (e.g. 820k) is derived at read time, never stored on listings.
+    await client.query(`
+      ALTER TABLE listings
+        ADD COLUMN IF NOT EXISTS agent_fee_percent      DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS southswift_fee_percent DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS total_fee_percent      DECIMAL(5,2) DEFAULT 5.00;
+    `);
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS agent_fee_percent      DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS southswift_fee_percent DECIMAL(5,2) DEFAULT 2.50,
+        ADD COLUMN IF NOT EXISTS total_fee_percent      DECIMAL(5,2) DEFAULT 5.00;
+    `);
+
+    // ── INSPECTION FEE (agent-set per listing, capped at ₦5,000) ──
+    // Old listings backfill to ₦3,000 (agreed). In-flight old deals keep 0 —
+    // mid-escrow economics are never rewritten; only new deals snapshot the fee.
+    await client.query(`
+      ALTER TABLE listings
+        ADD COLUMN IF NOT EXISTS inspection_fee BIGINT DEFAULT 3000;
+    `);
+    await client.query(`
+      ALTER TABLE deals
+        ADD COLUMN IF NOT EXISTS inspection_fee       BIGINT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS has_paid_inspection  BOOLEAN DEFAULT false,
+        ADD COLUMN IF NOT EXISTS inspection_paid_at   TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS inspection_reference VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS inspection_skipped   BOOLEAN DEFAULT false,
+        ADD COLUMN IF NOT EXISTS inspection_skipped_at TIMESTAMP;
+    `);
+    await client.query(`
+      ALTER TABLE payment_transactions
+        ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'rent';
+    `);
+    // Existing proofs predate the discriminator — all rent.
+    await client.query(`
+      UPDATE payment_transactions SET payment_type='rent' WHERE payment_type IS NULL;
+    `);
+    await client.query(`
+      UPDATE listings SET inspection_fee = COALESCE(inspection_fee, 3000)
+      WHERE inspection_fee IS NULL;
+    `);
+    await client.query(`
+      UPDATE deals SET
+        inspection_fee      = COALESCE(inspection_fee, 0),
+        has_paid_inspection = COALESCE(has_paid_inspection, false),
+        inspection_skipped  = COALESCE(inspection_skipped, false)
+      WHERE inspection_fee IS NULL
+         OR has_paid_inspection IS NULL
+         OR inspection_skipped IS NULL;
+    `);
+    // A deal can never read as both paid AND skipped — the bypass audit stays
+    // unambiguous (paid / skipped / pending).
+    await client.query(`
+      ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_inspection_state_check;
+      ALTER TABLE deals ADD CONSTRAINT deals_inspection_state_check CHECK (
+        NOT (has_paid_inspection AND inspection_skipped)
+      );
+    `);
+    // Enforce the ₦0–₦5,000 cap going forward (old rows already conform).
+    await client.query(`
+      ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_inspection_fee_check;
+      ALTER TABLE listings ADD CONSTRAINT listings_inspection_fee_check CHECK (
+        inspection_fee >= 0 AND inspection_fee <= 5000
+      );
+    `);
+    await client.query(`
+      ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_inspection_fee_check;
+      ALTER TABLE deals ADD CONSTRAINT deals_inspection_fee_check CHECK (
+        inspection_fee >= 0 AND inspection_fee <= 5000
+      );
+    `);
+    // One pending proof per (deal, type): inspection + rent pendings can coexist,
+    // duplicate same-type pendings stay blocked.
+    await client.query(`DROP INDEX IF EXISTS uniq_pending_txn_per_deal;`);
+    await client.query(`
+      ALTER TABLE payment_transactions DROP CONSTRAINT IF EXISTS payment_transactions_payment_type_check;
+      ALTER TABLE payment_transactions ADD CONSTRAINT payment_transactions_payment_type_check
+        CHECK (payment_type IN ('rent','inspection'));
+    `);
+
+    // Backfill old rows that predate the columns (or were inserted as NULL).
+    // Percents are audit labels only — safe on paid + unpaid rows alike.
+    // Naira amounts are NEVER touched here (see repair block below).
+    await client.query(`
+      UPDATE listings SET
+        agent_fee_percent      = COALESCE(agent_fee_percent, 2.50),
+        southswift_fee_percent = COALESCE(southswift_fee_percent, 2.50),
+        total_fee_percent      = COALESCE(total_fee_percent, 5.00)
+      WHERE agent_fee_percent IS NULL
+         OR southswift_fee_percent IS NULL
+         OR total_fee_percent IS NULL;
+    `);
+    await client.query(`
+      UPDATE deals SET
+        agent_fee_percent      = COALESCE(agent_fee_percent, 2.50),
+        southswift_fee_percent = COALESCE(southswift_fee_percent, 2.50),
+        total_fee_percent      = COALESCE(total_fee_percent, 5.00)
+      WHERE agent_fee_percent IS NULL
+         OR southswift_fee_percent IS NULL
+         OR total_fee_percent IS NULL;
+    `);
+
+    // Enforce the fixed policy going forward. Sum-check only (not per-side values)
+    // so a future policy change is a single migration, not a rewrite.
+    await client.query(`
+      ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_fee_check;
+      ALTER TABLE listings ADD CONSTRAINT listings_fee_check CHECK (
+        agent_fee_percent + southswift_fee_percent = total_fee_percent
+        AND total_fee_percent = 5.00
+      );
+    `);
+    await client.query(`
+      ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_fee_check;
+      ALTER TABLE deals ADD CONSTRAINT deals_fee_check CHECK (
+        agent_fee_percent + southswift_fee_percent = total_fee_percent
+        AND total_fee_percent = 5.00
+      );
+    `);
+
     // Allow 'archived' status on existing databases (CHECK constraint predates it)
     await client.query(`
       ALTER TABLE deals DROP CONSTRAINT IF EXISTS deals_status_check;
@@ -386,6 +529,20 @@ const initDB = async () => {
         AND total_paid <> rent_amount + service_fee_tenant;
     `);
 
+    // Repair fee naira amounts drifted from the fixed 2.5% policy — unpaid only.
+    // Paid escrow deals are report-only (never rewritten here).
+    await client.query(`
+      UPDATE deals
+      SET service_fee_tenant   = ROUND(rent_amount::numeric * 0.025),
+          service_fee_landlord = ROUND(rent_amount::numeric * 0.025),
+          total_paid           = rent_amount + ROUND(rent_amount::numeric * 0.025),
+          updated_at = NOW()
+      WHERE status IN ('initiated','payment_pending')
+        AND rent_amount > 0
+        AND (service_fee_tenant <> ROUND(rent_amount::numeric * 0.025)
+          OR service_fee_landlord <> ROUND(rent_amount::numeric * 0.025));
+    `);
+
     // Enable RLS on all public tables — blocks direct PostgREST access;
     // the Express backend connects as postgres superuser and is unaffected.
     await client.query(`
@@ -419,11 +576,13 @@ const initDB = async () => {
       CREATE INDEX IF NOT EXISTS idx_txn_deal      ON payment_transactions(deal_id);
       CREATE INDEX IF NOT EXISTS idx_txn_status    ON payment_transactions(status);
       CREATE INDEX IF NOT EXISTS idx_txn_reference ON payment_transactions(reference);
+      CREATE INDEX IF NOT EXISTS idx_txn_type      ON payment_transactions(payment_type);
       CREATE INDEX IF NOT EXISTS idx_audit_txn     ON transaction_audit(transaction_id);
 
-      -- Enforce at most ONE pending-review transaction per deal (duplicate-proof).
-      CREATE UNIQUE INDEX IF NOT EXISTS uniq_pending_txn_per_deal
-        ON payment_transactions(deal_id) WHERE status='pending_review';
+      -- Enforce at most ONE pending-review transaction per (deal, type):
+      -- inspection + rent proofs can pend side-by-side, duplicates stay blocked.
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_pending_txn_per_deal_type
+        ON payment_transactions(deal_id, payment_type) WHERE status='pending_review';
     `);
 
     console.log('✅ All SouthSwift tables initialised');
@@ -450,6 +609,7 @@ const releaseStaleReservations = async () => {
         SELECT d.id, d.listing_id, d.is_room_share_deal
         FROM deals d
         WHERE d.status IN ('initiated','payment_pending')
+          AND d.has_paid_inspection = false AND d.inspection_skipped = false
           AND d.created_at < NOW() - ($1 || ' hours')::interval
           AND NOT EXISTS (
             SELECT 1 FROM payment_transactions t
@@ -500,4 +660,121 @@ const releaseStaleReservations = async () => {
   }
 };
 
-module.exports = { pool, initDB, buildInitSqlStatements, releaseStaleReservations };
+// Expire inspection holds whose rent never arrived. An inspection-paid/skipped
+// deal holds the unit for INSPECTION_HOLD_TIMEOUT_HOURS (default 24); past that,
+// with no rent proof submitted and no booked deal on the listing, the deal is
+// archived and the hold released so the listing re-opens. Archived deals can
+// never secure rent afterwards (every money path gates on
+// initiated/payment_pending), so the tenant must start a fresh deal.
+// Runs on the same interval as releaseStaleReservations; kept separate so each
+// sweeper commits independently — a failure in one never blocks the other.
+const releaseExpiredInspectionHolds = async () => {
+  if (!process.env.DATABASE_URL) return;
+  const holdTimeoutHours = parseInt(process.env.INSPECTION_HOLD_TIMEOUT_HOURS, 10) || 24;
+  const client = await pool.connect();
+  let expiredDeals = [];
+  try {
+    await client.query('BEGIN');
+    // Hold timestamp is whichever resolution came first; legacy rows whose flag
+    // predates the timestamp columns fall back to updated_at (a stale untouched
+    // hold is exactly what should lapse). Rent proof submitted but unreviewed
+    // blocks expiry — no approve-after-release race.
+    const expired = await client.query(`
+      WITH lapsed AS (
+        SELECT d.id, d.listing_id, d.is_room_share_deal, d.tenant_id, d.agent_id
+        FROM deals d
+        WHERE d.status IN ('initiated','payment_pending')
+          AND (d.has_paid_inspection = true OR d.inspection_skipped = true)
+          AND COALESCE(d.inspection_paid_at, d.inspection_skipped_at, d.updated_at)
+              < NOW() - ($1 || ' hours')::interval
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_transactions t
+            WHERE t.deal_id = d.id AND t.payment_type = 'rent'
+              AND t.status IN ('pending_review','approved')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM deals d2
+            WHERE d2.listing_id = d.listing_id
+              AND d2.status IN ('escrow_held','docs_generated','movein_pending','completed','disputed')
+          )
+      ),
+      archived_holds AS (
+        UPDATE deals SET status='archived',
+          cancellation_reason='Inspection hold expired — rent not secured within ' || $1 || ' hours.',
+          updated_at=NOW()
+        WHERE id IN (SELECT id FROM lapsed)
+        RETURNING listing_id, is_room_share_deal
+      )
+      SELECT d.id, d.listing_id, d.is_room_share_deal, d.tenant_id, d.agent_id,
+             l.title AS listing_title
+      FROM deals d JOIN listings l ON l.id = d.listing_id
+      WHERE d.id IN (SELECT id FROM lapsed)
+    `, [String(holdTimeoutHours)]);
+
+    // The UPDATE above already archived; group the lapsed rows for hold release.
+    const byListing = new Map();
+    for (const d of expired.rows) {
+      expiredDeals.push(d);
+      const key = `${d.listing_id}|${d.is_room_share_deal}`;
+      if (!byListing.has(key)) byListing.set(key, { listing_id: d.listing_id, is_room_share_deal: d.is_room_share_deal, cnt: 0 });
+      byListing.get(key).cnt += 1;
+    }
+    for (const row of byListing.values()) {
+      if (row.is_room_share_deal) {
+        await client.query(
+          `UPDATE listings l
+           SET room_share_slots_filled = GREATEST(l.room_share_slots_filled - $2, 0),
+               is_available = (l.room_share_slots_filled - $2 < l.room_share_slots)
+           WHERE id=$1`,
+          [row.listing_id, Number(row.cnt)]
+        );
+      } else {
+        await client.query(
+          `UPDATE listings SET is_available=true WHERE id=$1
+           AND NOT EXISTS (
+             SELECT 1 FROM deals d
+             WHERE d.listing_id=$1 AND d.status IN ('escrow_held','docs_generated','movein_pending','completed','disputed')
+           )`,
+          [row.listing_id]
+        );
+      }
+    }
+    await client.query('COMMIT');
+    if (expired.rows.length) console.log(`⏳ Expired ${expired.rows.length} inspection hold(s) older than ${holdTimeoutHours}h.`);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('❌ releaseExpiredInspectionHolds error:', err.message);
+    return;
+  } finally {
+    client.release();
+  }
+
+  // Notify after commit — best-effort, never blocks the sweeper.
+  for (const d of expiredDeals) {
+    try {
+      const tenantRes = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [d.tenant_id]);
+      const agentRes  = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [d.agent_id]);
+      const tenant = tenantRes.rows[0] || {};
+      const agent  = agentRes.rows[0] || {};
+      const { handleEmail } = require('../utils/emailService');
+      if (tenant.email) {
+        await handleEmail({
+          to: tenant.email,
+          subject: '⏳ SouthSwift — Your Inspection Hold Has Expired',
+          html: `<h2>Inspection hold expired</h2><p>Dear ${tenant.full_name || 'tenant'},</p>`
+            + `<p>Your 24-hour hold on <strong>${d.listing_title || 'the property'}</strong> has expired because rent was not secured in time. The listing is open to other tenants again.</p>`
+            + `<p>To continue, please start a fresh booking from the listing page. Your inspection fee receipt remains on record — contact support if you re-book immediately.</p>`,
+        }).catch(() => {});
+      }
+      if (agent.email) {
+        await handleEmail({
+          to: agent.email,
+          subject: '⏳ SouthSwift — Inspection Hold Expired, Listing Re-opened',
+          html: `<p>Deal <code>${String(d.id).slice(0, 8)}</code> on <strong>${d.listing_title || ''}</strong> held no rent within 24h of inspection, so the hold was released and the listing is open again.</p>`,
+        }).catch(() => {});
+      }
+    } catch (e) { console.error('inspection-hold expiry notify error:', e.message); }
+  }
+};
+
+module.exports = { pool, initDB, buildInitSqlStatements, releaseStaleReservations, releaseExpiredInspectionHolds };

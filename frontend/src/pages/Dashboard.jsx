@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, deleteListing, getBanks, resolveAccount } from '../utils/api';
+import ShareListing from '../components/ShareListing';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
@@ -172,18 +173,33 @@ export function Dashboard() {
           <div>
             {deals.length===0
               ? <div style={s.empty}><Shield size={40} color="#DDD"/><p>No deals yet. Find a property to get started.</p><Link to="/listings" style={s.linkBtn}>Browse Listings</Link></div>
-              : deals.map(d=>(
-                <Link to={`/deals/${d.id}`} key={d.id} style={s.dealRow}>
-                  <div>
-                    <div style={s.dealTitle}>{d.listing_title}</div>
-                    <div style={s.dealSub}>{d.city} · {new Date(d.created_at).toLocaleDateString('en-NG')}</div>
+              : deals.map(d=>{
+                const readyToContinue = Number(d.inspection_fee) > 0 && (d.has_paid_inspection || d.inspection_skipped) && ['initiated','payment_pending'].includes(d.status);
+                const isInspectionReady = readyToContinue && d.has_paid_inspection;
+                const isSkippedReady = readyToContinue && d.inspection_skipped;
+                const badgeLabel = isInspectionReady ? 'Inspection paid' : isSkippedReady ? 'Inspection skipped' : d.status.replace(/_/g,' ');
+                const badgeColor = isInspectionReady ? '#166534' : isSkippedReady ? '#92400E' : statusColor[d.status];
+                const badgeBg = isInspectionReady ? '#DCFCE7' : isSkippedReady ? '#FEF3C7' : statusColor[d.status]+'22';
+                return (
+                  <div key={d.id} style={{...s.dealRow, flexDirection:'column', alignItems:'stretch'}}>
+                    <Link to={`/deals/${d.id}`} style={{display:'flex', justifyContent:'space-between', alignItems:'center', textDecoration:'none', color:'inherit'}}>
+                      <div>
+                        <div style={s.dealTitle}>{d.listing_title}</div>
+                        <div style={s.dealSub}>{d.city} · {new Date(d.created_at).toLocaleDateString('en-NG')}</div>
+                      </div>
+                      <div style={s.dealRight}>
+                        <div style={s.dealAmt}>₦{formatNaira(d.rent_amount)}</div>
+                        <div style={{...s.statusBadge, background:badgeBg, color:badgeColor}}>{badgeLabel}</div>
+                      </div>
+                    </Link>
+                    {readyToContinue && (
+                      <Link to={`/listings/${d.listing_id}?resume=1`} onClick={e=>e.stopPropagation()} style={{marginTop:10, background:G, color:'white', padding:'9px 14px', borderRadius:10, textDecoration:'none', fontWeight:800, fontSize:13, textAlign:'center', display:'block'}}>
+                        Continue Booking →
+                      </Link>
+                    )}
                   </div>
-                  <div style={s.dealRight}>
-                    <div style={s.dealAmt}>₦{formatNaira(d.rent_amount)}</div>
-                    <div style={{...s.statusBadge, background:statusColor[d.status]+'22', color:statusColor[d.status]}}>{d.status.replace(/_/g,' ')}</div>
-                  </div>
-                </Link>
-              ))
+                );
+              })
             }
           </div>
         )}
@@ -208,6 +224,7 @@ export function Dashboard() {
                     </div>
                   </div>
                   <div style={s.rowActions}>
+                      <ShareListing listing={l} />
                       <Link to={`/edit-listing/${l.id}`} style={s.editBtn}>Edit</Link>
                       <button onClick={() => requestDelete(l)} style={s.deleteBtn}>Delete</button>
                     </div>
@@ -349,7 +366,7 @@ const s = {
   label:     { display:'block', fontSize:12, fontWeight:700, color:'#444', marginBottom:5, marginTop:12 },
   input:     { width:'100%', border:'1px solid #DDD', borderRadius:8, padding:'10px 12px', fontSize:13, boxSizing:'border-box', outline:'none', resize:'vertical' },
   verBtn:    { background:G, color:'white', border:'none', padding:'11px 24px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14, marginTop:14 },
-  listingCard:{ background:'white', borderRadius:10, marginBottom:10, border:'1px solid #E5E7EB', overflow:'hidden' },
+  listingCard:{ background:'white', borderRadius:10, marginBottom:10, border:'1px solid #E5E7EB', overflow:'visible' },
   rowActions:{ display:'flex', gap:8, padding:'10px 16px', borderTop:'1px solid #F3F4F6', background:'#FAFAFA' },
   editBtn:   { flex:1, display:'block', textAlign:'center', textDecoration:'none', background:'#F0F9F0', color:G, border:`1px solid ${G}`, padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },
   deleteBtn: { flex:1, background:'#FEE2E2', color:'#DC2626', border:'1px solid #FECACA', padding:'7px 12px', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 },

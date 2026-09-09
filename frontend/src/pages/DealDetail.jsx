@@ -8,7 +8,7 @@ import {
   createListing, updateListing, getListing, getDashboard, getPendingAgents,
   verifyAgent, getAllDeals, releaseFunds, resolveDispute,
   getAgent, submitReview, getAgentReviews, getWaitlist,
-  getAllListings, deleteListingsBulk
+  getAllListings, deleteListingsBulk, verifyInspectionPayment
 } from '../utils/api';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
@@ -79,6 +79,7 @@ function BankSelect({ banks, value, onChange, inputStyle }) {
 export function DealDetail() {
   const { id }          = useParams();
   const { user }        = useAuth();
+  const navigate          = useNavigate();
   const [deal, setDeal] = useState(null);
   const [loading, setL] = useState(true);
   const [reason, setR]  = useState('');
@@ -98,7 +99,7 @@ export function DealDetail() {
   const [myTxn, setMyTxn]         = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [proof, setProof] = useState({
-    amount_naira:      deal?.total_paid ? String(deal.total_paid) : '',
+    amount_naira:      deal?.total_paid ? String(deal.total_paid * (Number(deal.lease_duration_months)/12)) : '',
     payer_bank:        '',
     transfer_reference:'',
     transfer_date:     '',
@@ -124,26 +125,34 @@ export function DealDetail() {
     getCompanyAccount().then(r => setAccount(r.data)).catch(() => {});
     getNigerianBanks().then(r => setBanks(r.data.banks || [])).catch(() => {});
     getMyTransaction(deal.id).then(r => setMyTxn(r.data.transaction)).catch(() => {});
-    setProof(p => ({ ...p, amount_naira: String(deal.total_paid) }));
+    setProof(p => ({ ...p, amount_naira: String(deal.total_paid * (Number(deal.lease_duration_months)/12)) }));
   }, [deal, user]);
 
   // Returning from Paystack — the callback appends ?reference=...&trxref=...
   // Verify the payment, then refresh the deal so the progress + badge update.
-  // The webhook is the server-side backup; "already verified" is not an error.
+  // ?inspection=1 marks an inspection-fee return (verified against the deal's
+  // inspection snapshot, never the rent total). The webhook is the server-side
+  // backup; "already verified" is not an error.
   // Effect must depend on id + the reference so navigating to a DIFFERENT deal's
   // callback URL re-runs the verification — previously empty deps meant only the
   // first mount verified, and a second deal's ?reference=... was ignored.
   useEffect(() => {
     const reference = searchParams.get('reference') || searchParams.get('trxref');
     if (!reference) return;
+    const isInspection = searchParams.get('inspection') === '1';
     let active = true;
     (async () => {
       try {
-        await verifyPayment(reference);
-        if (active) toast.success('Payment confirmed — funds secured in SwiftShield escrow. 🛡️');
+        if (isInspection) {
+          await verifyInspectionPayment(reference);
+          if (active) toast.success('Inspection fee confirmed — continue your booking. 🔍');
+        } else {
+          await verifyPayment(reference);
+          if (active) toast.success('Payment confirmed — funds secured in SwiftShield escrow. 🛡️');
+        }
       } catch (err) {
         const msg = err.response?.data?.error;
-        if (active && msg && !/already verified/i.test(msg)) toast.error(msg);
+        if (active && msg && !/already verified|already marked as paid/i.test(msg)) toast.error(msg);
       } finally {
         if (active) {
           getDeal(id).then(r => setDeal(r.data)).catch(() => {});
@@ -293,23 +302,60 @@ export function DealDetail() {
           <div style={ps.left}>
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Deal Breakdown</h3>
-              {[['Rent Amount',`₦${formatNaira(deal.rent_amount)}`],
-                // ['SwiftShield Fee — Tenant (2.5%)',`₦${formatNaira(deal.service_fee_tenant)}`],
-                // ['SwiftShield Fee — Landlord (2.5%)',`₦${formatNaira(deal.service_fee_landlord)}`],
-                // ['Total Platform Fee (5%)',`₦${formatNaira(Number(deal.service_fee_tenant)+Number(deal.service_fee_landlord))}`],
-                // ['Tenant Total',`₦${formatNaira(deal.total_paid)}`],
-                // ['Landlord Disbursement',`₦${formatNaira(Number(deal.rent_amount)-Number(deal.service_fee_landlord))}`],
-                ['Lease Duration',`${deal.lease_duration_months} months`],
-                ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
-                ['Deal ID', deal.id.slice(0,8)+'...'],
-                ['Payment Ref', deal.payment_reference || deal.paystack_reference || 'Awaiting Payment'],
-              ].map(([k,v])=>(
-                <div key={k} style={ps.row}>
-                  <span style={ps.rowK}>{k}</span>
-                  <span style={ps.rowV}>{v}</span>
-                </div>
-              ))}
+              {(() => {
+                const isStaff = ['agent','admin'].includes(user?.role);
+                const rows = [
+                  ['Rent Amount',`₦${formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))}`],
+                ];
+                // Inspection fee is tenant-facing (price + own payment state) —
+                // unlike the 2.5% split, it is never stripped.
+                 if (Number(deal.inspection_fee) > 0) {
+                   const inspStatus = deal.has_paid_inspection ? 'Paid ✅' : deal.inspection_skipped ? 'Skipped ⏭️' : 'Unpaid';
+                   rows.push(['Inspection Fee',
+                     `₦${formatNaira(deal.inspection_fee)} — ${inspStatus}`]);
+                 }
+                // Fee split is agent/admin-only: tenants see rent + total, never charges.
+                if (isStaff && deal.agent_fee_percent != null) {
+                  if (deal.service_fee_tenant != null)
+                    rows.push(['SouthSwift Fee',`₦${formatNaira(deal.service_fee_tenant)} (${deal.southswift_fee_percent}%)`]);
+                  if (deal.service_fee_landlord != null)
+                    rows.push(['Agent-side Fee (landlord funds via agent)',`₦${formatNaira(deal.service_fee_landlord)} (${deal.agent_fee_percent}%)`]);
+                
+                } 
+                rows.push(
+                  ['Lease Duration',`${deal.lease_duration_months} months`],
+                  ['Move-in Date', deal.move_in_date ? new Date(deal.move_in_date).toLocaleDateString('en-NG') : 'Not set'],
+                  ['Deal ID', deal.id.slice(0,8)+'...'],
+                  ['Payment Ref', deal.payment_reference || deal.paystack_reference || 'Awaiting Payment'],
+                );
+                return rows.map(([k,v])=>(
+                  <div key={k} style={ps.row}>
+                    <span style={ps.rowK}>{k}</span>
+                    <span style={ps.rowV}>{v}</span>
+                  </div>
+                ));
+              })()}
             </div>
+
+            {/* Inspection paid or skipped but rent not yet in escrow — route the tenant back
+                into the listing wizard to finish booking. */}
+            {isTenant && Number(deal.inspection_fee) > 0 && (deal.has_paid_inspection || deal.inspection_skipped) &&
+              ['initiated', 'payment_pending'].includes(deal.status) && (
+              <div style={ps.infoCard}>
+                <h3 style={ps.cardTitle}>
+                  {deal.inspection_skipped ? ' Inspection Skipped' : ' Inspection Paid'}
+                </h3>
+                <p style={{fontSize:12.5, color:'#555', margin:'0 0 12px'}}>
+                  {deal.inspection_skipped
+                    ? 'You skipped the inspection. Continue your booking to pay rent directly.'
+                    : 'Your inspection fee is confirmed. Continue your booking to complete documentation and rent payment.'}
+                </p>
+                <button onClick={() => navigate(`/listings/${deal.listing_id}?resume=1`)}
+                  style={{...ps.confirmBtn, width:'100%'}}>
+                  Continue Booking →
+                </button>
+              </div>
+            )}
 
             <div style={ps.infoCard}>
               <h3 style={ps.cardTitle}>Parties</h3>
@@ -365,7 +411,7 @@ export function DealDetail() {
                 ) : (
                   <div style={ps.actionCard}>
                     <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
-                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.total_paid)} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
+                    <p style={ps.actionDesc}>Transfer ₦{formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))} to SouthSwift's account below, then submit your proof. Your rent is secured in SwiftShield escrow once an admin confirms.</p>
                     {account ? (
                       <div style={{background:'#fff', borderRadius:10, padding:'14px 16px', border:'1px solid #BBF7D0', marginBottom:14}}>
                         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
@@ -405,7 +451,7 @@ export function DealDetail() {
                   <h3 style={{...ps.cardTitle, color:'#166534'}}>🛡️ Complete Your Payment</h3>
                   <p style={ps.actionDesc}>Pay securely via Paystack. Your rent stays in SwiftShield escrow and is only released when you confirm move-in.</p>
                   <button onClick={handlePayNow} disabled={paying} style={{...ps.confirmBtn, opacity: paying ? 0.7 : 1}}>
-                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.total_paid)}`}
+                    {paying ? 'Starting payment…' : `Pay Now — ₦${formatNaira(deal.total_paid * (Number(deal.lease_duration_months)/12))}`}
                   </button>
                 </div>
               )
@@ -547,6 +593,7 @@ export function CreateListing() {
     address: '', city: '', state: '', amenities: '',
     latitude: null, longitude: null,
     is_room_share: false, room_share_price_per_person: '', room_share_slots: 2,
+    inspection_fee: '3000',
     is_available:true
   });
   const [loading, setL]          = useState(false);
@@ -574,7 +621,7 @@ export function CreateListing() {
         const l = r.data;
         setForm({
           title: l.title || '', description: l.description || '', property_type: l.property_type || 'apartment',
-          bedrooms: l.bedrooms ?? 1, bathrooms: l.bathrooms ?? 1, rent_price: l.rent_price ?? '',
+          bedrooms: l.bedrooms ?? 1, bathrooms: l.bathrooms ?? 1, rent_price: l.total_paid ?? '',
           rent_period: l.rent_period || 'yearly', address: l.address || '',
           city: l.city || '', state: l.state || '',
           amenities: Array.isArray(l.amenities) ? l.amenities.join(', ') : (l.amenities || ''),
@@ -582,7 +629,10 @@ export function CreateListing() {
           is_room_share: !!l.is_room_share,
           room_share_price_per_person: l.room_share_price_per_person ?? '',
           room_share_slots: l.room_share_slots ?? 2,
+          inspection_fee: l.inspection_fee ?? 3000,
           is_available: l.is_available,
+          rent_price:l.rent_price
+
         });
         setAddrQuery(l.address || '');
         setImageItems((Array.isArray(l.images) ? l.images : []).map(url => ({ uid: ++uidRef.current, url })));
@@ -663,6 +713,18 @@ export function CreateListing() {
     if (form.is_room_share && !(Number(form.room_share_price_per_person) > 0)) {
       toast.error('Please set a price per person for the room share.');
       return;
+    }
+    // Inspection fee: agent-set, capped at ₦5,000. Blank defaults to ₦3,000 server-side.
+    if (form.inspection_fee !== '' && form.inspection_fee !== null && form.inspection_fee !== undefined) {
+      const insp = Number(form.inspection_fee);
+      if (!Number.isFinite(insp) || insp < 0 || Math.round(insp) !== insp) {
+        toast.error('Inspection fee must be a whole-naira amount of ₦0 or more.');
+        return;
+      }
+      if (insp > 5000) {
+        toast.error('Inspection fee must not exceed ₦5,000.');
+        return;
+      }
     }
     setL(true);
     try {
@@ -763,6 +825,18 @@ export function CreateListing() {
             <label style={ps.label}>Rent Price (₦) *</label>
             <input style={ps.input} type="number" value={form.rent_price} placeholder="800000"
               onChange={e => setForm(f => ({ ...f, rent_price: e.target.value }))}/>
+        
+          </div>
+
+          {/* Inspection fee — agent-set, capped at ₦5,000. Blank/0 skips the inspection step for tenants. */}
+          <div>
+            <label style={ps.label}>Inspection Fee (₦)</label>
+            <input style={ps.input} type="number" min="0" max="5000" step="1"
+              value={form.inspection_fee} placeholder="3000"
+              onChange={e => setForm(f => ({ ...f, inspection_fee: e.target.value }))}/>
+            <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+              Max ₦5,000. Tenants pay this before booking (non-refundable, SouthSwift revenue). Set 0 to skip inspection.
+            </p>
           </div>
 
           {/* Room Share Toggle */}
@@ -952,18 +1026,21 @@ export function AdminPanel() {
 
   const handleBulkDelete = async () => {
     const ids = Array.from(selectedListings);
-    if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} listing(s)? Listings with completed or in-escrow deals will be skipped.`)) return;
+    if (!ids.length) { toast.error('No listings selected.'); return; }
+    if (ids.length > 5) { toast.error('You can delete at most 5 listings at once.'); return; }
+    toast.loading(`Deleting ${ids.length} listing(s)…`);
     setDeletingListings(true);
     try {
       const r = await deleteListingsBulk(ids);
       const msg = r.data.blocked_count
         ? `Deleted ${r.data.deleted_count}. Skipped ${r.data.blocked_count} (active deals).`
         : `Deleted ${r.data.deleted_count} listing(s).`;
+      toast.dismiss();
       toast.success(msg);
       setSelectedListings(new Set());
       await refreshAllListings();
     } catch (err) {
+      toast.dismiss();
       toast.error(err.response?.data?.error || 'Bulk delete failed.');
     }
     setDeletingListings(false);
@@ -1073,7 +1150,7 @@ export function AdminPanel() {
                   <div style={ps.agentDetail}>Tenant: {d.tenant_name} · Agent: {d.agent_name}</div>
                 </div>
                 <div style={{textAlign:'right'}}>
-                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(d.rent_amount)}</div>
+                  <div style={{fontWeight:700, color:G}}>₦{formatNaira(d.total_paid)}</div>
                   <div style={{fontSize:11, color:'#888'}}>{d.status}</div>
                   {d.status==='escrow_held' && (
                     <button onClick={async()=>{await releaseFunds(d.id);toast.success('Funds released');}} style={ps.relBtn}>Release Funds</button>
@@ -1151,7 +1228,7 @@ export function AdminPanel() {
                       {d.listing_title} — {d.city}
                     </div>
                     <div style={{fontSize:12, color:'#888', marginBottom:4}}>
-                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{formatNaira(d.rent_amount)}
+                      Tenant: {d.tenant_name} · Agent: {d.agent_name} · ₦{formatNaira(d.total_paid)}
                     </div>
                     <div style={{fontSize:12, color:'#DC2626', marginBottom:10}}>
                       <strong>Dispute:</strong> {d.dispute_reason}
