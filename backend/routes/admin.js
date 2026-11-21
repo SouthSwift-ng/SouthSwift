@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { adminController } = require('../controllers/agentAdminController');
 const { listTransactions, getTransaction, reviewTransaction } = require('../controllers/paymentsController');
+const { adminListWithdrawals, adminReviewWithdrawal } = require('../controllers/referralController');
 const { protect, adminOnly } = require('../middleware/auth');
 
 router.use(protect, adminOnly);
@@ -16,6 +17,8 @@ router.put('/deals/:id/resolve-dispute', adminController.resolveDispute);
 router.get('/transactions',           listTransactions);
 router.get('/transactions/:id',       getTransaction);
 router.put('/transactions/:id',       reviewTransaction);
+router.get('/withdrawals',            adminListWithdrawals);
+router.put('/withdrawals/:id',        adminReviewWithdrawal);
 router.get('/users',                  adminController.getUsers);
 router.get('/listings',               adminController.getAllListings);
 router.delete('/listings',            adminController.deleteListingsBulk);

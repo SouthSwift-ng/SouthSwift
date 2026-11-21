@@ -131,14 +131,14 @@ export default function Home() {
         <div style={s.heroInner}>
           <div style={s.heroTag}>
             <Shield size={14} color={GOLD} />
-            <span>SwiftShield Escrow Protected</span>
+            <span>Escrow Protected</span>
           </div>
           <h1 style={s.heroTitle}>
             Find Your Next Home.<br />
             <span style={{ color: GOLD }}>Protected From Day One.</span>
           </h1>
           <p style={s.heroSub}>
-            Verified agents · Escrow payments · Free legal counsel · Across Nigeria
+            Verified agents · Escrow-protected payments · Fees shown upfront
           </p>
 
           {/* Search bar */}
@@ -156,10 +156,10 @@ export default function Home() {
 
           {/* Stats */}
           <div style={s.heroStats}>
-            {[['🛡️','SwiftShield','Escrow every deal'],
-              ['📋','SwiftDoc','Legal docs auto-generated'],
-              ['⚖️','SwiftCounsel','Free property lawyers'],
-              ['🔗','SwiftConnect','Monitored agent chat']].map(([icon,name,desc])=>(
+            {[['✅','Agent checks','Identity reviewed'],
+              ['🛡️','Escrow','Released after move-in'],
+              ['🧾','Fees upfront','No hidden charges'],
+              ['🤝','One platform','Agents, landlords & agencies']].map(([icon,name,desc])=>(
               <div key={name} style={s.statItem}>
                 <span style={s.statIcon}>{icon}</span>
                 <div>
@@ -188,7 +188,7 @@ export default function Home() {
           <select style={s.select} value={filters.swiftshield}
             onChange={e => setFilters(f => ({ ...f, swiftshield: e.target.value }))}>
             <option value="">All Listings</option>
-            <option value="true">SwiftShield Only</option>
+            <option value="true">Escrow Protected</option>
           </select>
           <input style={s.priceInput} type="number" placeholder="Max Price (₦)"
             value={filters.max_price}

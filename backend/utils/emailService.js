@@ -1,7 +1,8 @@
 const nodemailer = require('nodemailer');
 const axios = require('axios');
+const { escapeHtml } = require('./escapeHtml');
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.EMAIL_PASS
+const RESEND_API_KEY = process.env.RESEND_API_KEY
 const EMAIL_FROM = process.env.EMAIL_FROM || 'SouthSwift 🛡️ <support@southswift.com.ng>';
 // Create transporter with flexible configuration
 const createTransporter = () => {
@@ -25,7 +26,7 @@ const createTransporter = () => {
 
   // Provider-specific configurations
   const emailHost = process.env.EMAIL_HOST?.toLowerCase();
-  
+
   if (emailHost?.includes('yandex')) {
     // Yandex 360 configuration
     config.port = 465;
@@ -428,7 +429,7 @@ const sendOTPEmail = (userEmail, fullName, otpCode) => {
   // Fire and forget - completely non-blocking
   setImmediate(() => {
     const emailTemplate = getOTPEmailTemplate(fullName, otpCode);
-    
+
     const mailOptions = {
       from: `"Verify Your SouthSwift  Account" <${process.env.EMAIL_USER}>`,
       to: userEmail,
@@ -448,7 +449,7 @@ const sendWelcomeEmail = (userEmail, fullName, userRole) => {
   setImmediate(() => {
     const transporter = createTransporter();
     const emailTemplate = getWelcomeEmailTemplate(fullName, userRole);
-    
+
     const mailOptions = {
       from: `"SouthSwift Team" <${process.env.EMAIL_USER}>`,
       to: userEmail,
@@ -461,24 +462,24 @@ const sendWelcomeEmail = (userEmail, fullName, userRole) => {
       .catch(error => console.error(`❌ Failed to send welcome email to ${userEmail}:`, error.message));
   });
 };
-const handleEmail = ({to,subject,html,from}) => {
+const handleEmail = ({ to, subject, html, from }) => {
   setImmediate(() => {
     const transporter = createTransporter();
-    
+
     const mailOptions = {
-      from: from ||  `"SouthSwift Team" <${process.env.EMAIL_USER}>`,
+      from: from || `"SouthSwift Team" <${process.env.EMAIL_USER}>`,
       to,
       subject,
       html
     };
-RESEND_API_KEY ? sendWithResend(mailOptions) :
-    transporter.sendMail(mailOptions)
-      .then(info => console.log(`Email sent to ${to}:`, info.messageId))
-      .catch(error => console.error(` Failed to send  email to ${to}:`, error.message));
+    RESEND_API_KEY ? sendWithResend(mailOptions) :
+      transporter.sendMail(mailOptions)
+        .then(info => console.log(`Email sent to ${to}:`, info.messageId))
+        .catch(error => console.error(` Failed to send  email to ${to}:`, error.message));
   });
 };
 
-const sendWithResend=  async ({ to, subject, html, text,from }) => {
+const sendWithResend = async ({ to, subject, html, text, from }) => {
   if (!RESEND_API_KEY) {
     console.error('❌ Email send error: RESEND_API_KEY not configured');
     return { ok: false, error: 'Email not configured' };
@@ -492,10 +493,10 @@ const sendWithResend=  async ({ to, subject, html, text,from }) => {
   }
   try {
     await axios.post('https://api.resend.com/emails', {
-      from: from ||   EMAIL_FROM,
-      to:      [to],
+      from: from || EMAIL_FROM,
+      to: [to],
       subject,
-      html:    html || `<p>${text}</p>`,
+      html: html || `<p>${text}</p>`,
     }, {
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -516,9 +517,111 @@ const sendWithResend=  async ({ to, subject, html, text,from }) => {
   }
 };
 
+// ── REFERRAL & WITHDRAWAL EMAILS ─────────────────────────────────────────────
+const naira = (value) => `\u20A6${Number(value || 0).toLocaleString('en-NG')}`;
+
+const simpleEmailShell = (title, body) => `
+  <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#333">
+    <div style="background:#1B4332;color:#fff;padding:28px 24px;text-align:center;border-radius:10px 10px 0 0">
+      <div style="font-family:Georgia,serif;font-size:22px;font-weight:900">SouthSwift</div>
+      <div style="font-size:12px;opacity:.8;margin-top:4px">Trust infrastructure for Nigerian real estate</div>
+    </div>
+    <div style="border:1px solid #E5E7EB;border-top:none;padding:28px 24px;border-radius:0 0 10px 10px">
+      <h2 style="color:#1B4332;font-family:Georgia,serif;margin-top:0">${title}</h2>
+      ${body}
+      <p style="font-size:12px;color:#888;margin-top:28px;border-top:1px solid #E5E7EB;padding-top:14px">
+        SouthSwift Enterprise · CAC BN 7310264 · southswift.com.ng
+      </p>
+    </div>
+  </div>
+`;
+
+// To the referrer when someone registers with their code.
+const sendReferralSignupEmail = (referrerEmail, referrerName, referredName) => {
+  if (!referrerEmail) return;
+  handleEmail({
+    to: referrerEmail,
+    subject: 'Someone joined SouthSwift with your referral code',
+    html: simpleEmailShell(
+      `Hello ${escapeHtml(referrerName || 'there')},`,
+      `<p><strong>${escapeHtml(referredName || 'A new user')}</strong> just joined SouthSwift using your referral code.</p>
+       <p>You will earn <strong>${naira(process.env.REFERRAL_REWARD_NGN || 1000)}</strong> once they complete a rental and confirm move-in.</p>`
+    ),
+  });
+};
+
+// To the referrer when a completed rental credits their balance.
+const sendReferralRewardEmail = (referrerEmail, referrerName, referredName, listingTitle, newBalance) => {
+  if (!referrerEmail) return;
+  handleEmail({
+    to: referrerEmail,
+    subject: `You earned ${naira(process.env.REFERRAL_REWARD_NGN || 1000)} on SouthSwift`,
+    html: simpleEmailShell(
+      `Well done, ${escapeHtml(referrerName || 'there')}!`,
+      `<p><strong>${escapeHtml(referredName || 'Your referral')}</strong> completed a rental${listingTitle ? ` at <strong>${escapeHtml(listingTitle)}</strong>` : ''
+      }.</p>
+       <p>Your referral reward has been credited. New available balance: <strong>${naira(newBalance)}</strong>.</p>
+       <p>You can request a withdrawal from your SouthSwift dashboard.</p>`
+    ),
+  });
+};
+
+// To the user with the withdrawal OTP.
+const sendWithdrawalOtpEmail = (userEmail, fullName, otpCode, amount, maskedAccount) => {
+  if (!userEmail) return;
+  handleEmail({
+    to: userEmail,
+    subject: 'Your SouthSwift withdrawal verification code',
+    html: simpleEmailShell(
+      'Confirm your withdrawal',
+      `<p>Hello ${escapeHtml(fullName || 'there')},</p>
+       <p>Use the code below to confirm your withdrawal of <strong>${naira(amount)}</strong>${maskedAccount ? ` to <strong>${escapeHtml(maskedAccount)}</strong>` : ''
+      }.</p>
+       <div style="background:#F8FAF8;border:2px solid #1B4332;border-radius:10px;padding:22px;text-align:center;
+                   font-family:'Courier New',monospace;font-size:32px;font-weight:900;letter-spacing:8px;color:#1B4332;margin:20px 0">
+         ${escapeHtml(otpCode)}
+       </div>
+       <p style="font-size:13px;color:#666">This code expires in 10 minutes. If you did not request a withdrawal, ignore this email and contact support immediately.</p>`
+    ),
+  });
+};
+
+// To the user when a withdrawal is submitted or its status changes.
+const sendWithdrawalStatusEmail = (userEmail, fullName, status, amount, accountName, note) => {
+  if (!userEmail) return;
+  const titles = {
+    submitted: 'Withdrawal request received',
+    approved: 'Withdrawal approved',
+    rejected: 'Withdrawal request rejected',
+    paid: 'Withdrawal paid',
+  };
+  const messages = {
+    submitted: 'Your withdrawal request has been sent to the SouthSwift team for review.',
+    approved: 'Your withdrawal has been approved and is being processed.',
+    rejected: 'Your withdrawal request was rejected. The funds remain available in your SouthSwift balance.',
+    paid: 'Your withdrawal has been paid to your bank account.',
+  };
+  handleEmail({
+    to: userEmail,
+    subject: `SouthSwift — ${titles[status] || 'Withdrawal update'}`,
+    html: simpleEmailShell(
+      titles[status] || 'Withdrawal update',
+      `<p>Hello ${escapeHtml(fullName || 'there')},</p>
+       <p>${messages[status] || 'Your withdrawal status has changed.'}</p>
+       <p><strong>Amount:</strong> ${naira(amount)}${accountName ? `<br><strong>Account:</strong> ${escapeHtml(accountName)}` : ''
+      }</p>
+       ${note ? `<p><strong>Admin note:</strong> ${escapeHtml(note)}</p>` : ''}`
+    ),
+  });
+};
+
 module.exports = {
   sendWelcomeEmail,
   generateOTP,
   sendOTPEmail,
-  handleEmail
+  handleEmail,
+  sendReferralSignupEmail,
+  sendReferralRewardEmail,
+  sendWithdrawalOtpEmail,
+  sendWithdrawalStatusEmail,
 };

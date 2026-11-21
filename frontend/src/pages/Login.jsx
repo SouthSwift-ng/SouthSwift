@@ -65,6 +65,7 @@ export function Register() {
   const [searchParams]        = useSearchParams();
   const prefilledRole         = searchParams.get('role') || 'tenant';
   const prefilledEmail        = searchParams.get('email') || '';
+  const prefilledReferral     = searchParams.get('ref') || '';
   const shouldShowVerify      = searchParams.get('verify') === 'true';
   
   const [form, setForm]       = useState({ 
@@ -74,7 +75,8 @@ export function Register() {
     password:'', 
     role: ['tenant','agent','landlord'].includes(prefilledRole) ? prefilledRole : 'tenant', 
     state:'', 
-    city:'' 
+    city:'',
+    referral_code: prefilledReferral,
   });
   const [loading, setLoading] = useState(false);
   const [showVerification, setShowVerification] = useState(shouldShowVerify);
@@ -152,6 +154,10 @@ export function Register() {
               <option key={st} value={st}>{st}</option>
             ))}
           </select>
+          <label style={s.label}>Referral code (optional)</label>
+          <input style={s.input} type="text" value={form.referral_code}
+            placeholder="e.g. SSAB12CD"
+            onChange={e=>setForm(f=>({...f,referral_code:e.target.value.toUpperCase().trim()}))} />
           <label style={s.label}>Password</label>
           <input style={s.input} type="password" value={form.password} placeholder="Min 8 characters" required minLength={8}
             onChange={e=>setForm(f=>({...f,password:e.target.value}))} />

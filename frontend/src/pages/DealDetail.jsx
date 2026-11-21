@@ -14,6 +14,7 @@ import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
 import { Shield, CheckCircle, AlertTriangle, FileText, MessageSquare, X } from 'lucide-react';
 import AdminTransactions from './AdminTransactions';
+import AdminWithdrawals from './AdminWithdrawals';
 
 const G    = '#1B4332';
 const GOLD = '#C8963C';
@@ -1059,7 +1060,7 @@ export function AdminPanel() {
       <div style={ps.container}>
         <h1 style={ps.pageTitle}>🛡️ SouthSwift Admin</h1>
         <div style={ps.tabs}>
-          {['dashboard','agents','listings','deals','transactions','disputes','waitlist'].map(t=>(
+          {['dashboard','agents','listings','deals','transactions','withdrawals','disputes','waitlist'].map(t=>(
             <button key={t} onClick={()=>setTab(t)} style={{...ps.tab, ...(tab===t?ps.tabA:{})}}>
               {t.charAt(0).toUpperCase()+t.slice(1)}
             </button>
@@ -1161,9 +1162,9 @@ export function AdminPanel() {
           </div>
         )}
 
-        {tab === 'transactions' && <AdminTransactions/>
+        {tab === 'transactions' && <AdminTransactions/>}
 
-        }
+        {tab === 'withdrawals' && <AdminWithdrawals/>}
 
         {tab === 'waitlist' && (
           <div>
