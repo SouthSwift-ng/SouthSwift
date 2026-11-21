@@ -4,6 +4,8 @@ const { generateSwiftDoc } = require('./swiftdocController');
 const { escapeHtml }        = require('../utils/escapeHtml');
 const { computeDealAmounts, dealHoldsReservation, inspectionSatisfied, requiresInspectionFee } = require('../utils/money');
 const { handleEmail } = require('../utils/emailService');
+const { creditReferralReward } = require('../utils/referral');
+const { notifyReferralReward } = require('./referralController');
 
 // ── PAYSTACK HELPERS ─────────────────────────────────────────────────────────
 const paystackHeaders = {
@@ -571,6 +573,16 @@ const skipInspection = async (req, res) => {
     if (!['initiated', 'payment_pending'].includes(deal.status))
       return res.status(400).json({ error: `Cannot skip inspection at status: ${deal.status}.` });
 
+    // A submitted proof is awaiting admin review — skipping now could approve a
+    // fee for a deal that was already skipped, so require the review first.
+    const pendingProof = await pool.query(
+      `SELECT 1 FROM payment_transactions
+       WHERE deal_id=$1 AND payment_type='inspection' AND status='pending_review' LIMIT 1`,
+      [deal.id]
+    );
+    if (pendingProof.rows.length)
+      return res.status(409).json({ error: 'Your inspection payment proof is awaiting admin confirmation. You cannot skip inspection now.' });
+
     // Guard: cannot skip into a hold if property already booked or held by another inspection
     const listingCheck = await pool.query('SELECT is_available, is_room_share FROM listings WHERE id=$1', [deal.listing_id]);
     if (!listingCheck.rows.length) return res.status(404).json({ error: 'Listing not found.' });
@@ -814,13 +826,29 @@ const confirmMoveIn = async (req, res) => {
 
       if (willBeCompleted >= listing.room_share_slots) {
         // Final confirmation — complete every funded room-share slot (this deal included).
-        await client.query(
+        const completedSlots = await client.query(
           `UPDATE deals SET status='completed', tenant_confirmed_at=COALESCE(tenant_confirmed_at, NOW()), updated_at=NOW()
-           WHERE listing_id=$1 AND is_room_share_deal=true AND status IN ('escrow_held','docs_generated','movein_pending')`,
+           WHERE listing_id=$1 AND is_room_share_deal=true AND status IN ('escrow_held','docs_generated','movein_pending')
+           RETURNING id, tenant_id`,
           [deal.listing_id]
         );
         await client.query('UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]);
+
+        const referralRewards = [];
+        for (const slot of completedSlots.rows) {
+          const reward = await creditReferralReward(client, slot.id, slot.tenant_id);
+          if (reward) {
+            referralRewards.push({
+              referrerId: reward.referrer_id,
+              referredUserId: reward.referred_user_id,
+              dealId: slot.id,
+            });
+          }
+        }
+
         await client.query('COMMIT');
+
+        referralRewards.forEach(notifyReferralReward);
 
         await handleEmail({
           to: process.env.ADMIN_EMAIL || 'ceo@southswift.com.ng',
@@ -853,7 +881,18 @@ const confirmMoveIn = async (req, res) => {
       [deal.id]
     );
     await client.query('UPDATE agent_profiles SET total_deals=total_deals+1 WHERE user_id=$1', [deal.agent_id]);
+
+    const reward = await creditReferralReward(client, deal.id, deal.tenant_id);
+
     await client.query('COMMIT');
+
+    if (reward) {
+      notifyReferralReward({
+        referrerId: reward.referrer_id,
+        referredUserId: reward.referred_user_id,
+        dealId: deal.id,
+      });
+    }
 
     await handleEmail({
       to: process.env.ADMIN_EMAIL || 'ceo@southswift.com.ng',

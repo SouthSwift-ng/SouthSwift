@@ -5,6 +5,7 @@ const { escapeHtml }    = require('../utils/escapeHtml');
 const { runSwiftDocBackground, reserveListingForDeal } = require('./dealController');
 const { dealHoldsReservation, inspectionSatisfied } = require('../utils/money');
 const { handleEmail } = require('../utils/emailService');
+const { getBankList } = require('../utils/bankCache');
 
 const ADMIN_NOTIFY_EMAIL =  'finance@southswift.com.ng';
 // const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_EMAIL || 'ceo@southswift.com.ng';
@@ -23,36 +24,17 @@ const NIGERIAN_BANKS = [
   'Titan Trust Bank',
 ];
 
-// In-process cache of the bank list (refreshed at most every 3 days) so we don't
-// hit Paystack on every page load.
-const BANK_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-let bankCache = { at: 0, banks: null };
-
 // GET /api/payments/banks — list of Nigerian banks for the payer-bank dropdown.
-// Prefers the live Paystack /bank list when a key is configured; otherwise falls
-// back to the curated static list so the field is never empty pre-production.
+// Prefers the shared cached Paystack list; falls back to the curated static list
+// so the field is never empty pre-production or during a Paystack outage.
 const getNigerianBanks = async (req, res) => {
-  if (bankCache.banks && Date.now() - bankCache.at < BANK_CACHE_TTL_MS) {
-    return res.json({ banks: bankCache.banks });
+  try {
+    const banks = (await getBankList()).map(b => b.name);
+    return res.json({ banks });
+  } catch (e) {
+    console.warn('Bank list unavailable, using static fallback:', e.message);
+    return res.json({ banks: NIGERIAN_BANKS });
   }
-  let banks = NIGERIAN_BANKS;
-  if (process.env.PAYSTACK_SECRET_KEY) {
-    try {
-      const r = await axios.get('https://api.paystack.co/bank?country=nigeria&currency=NGN', {
-        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
-        timeout: 10000,
-      });
-      const live = (r.data?.data || [])
-        .filter(b => b.country === 'Nigeria' && b.active !== false)
-        .map(b => b.name)
-        .sort((a, b) => a.localeCompare(b));
-      if (live.length) banks = live;
-    } catch (e) {
-      console.warn('Paystack bank list fetch failed, using static fallback:', e.message);
-    }
-  }
-  bankCache = { at: Date.now(), banks };
-  res.json({ banks });
 };
 
 // Server-generated, human-readable unique transaction reference. The UNIQUE

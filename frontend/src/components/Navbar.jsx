@@ -26,6 +26,7 @@ export default function Navbar() {
         {/* Desktop links */}
         <div style={s.desktopLinks} className="ss-desktop">
           <Link to="/listings" style={s.link}><Home size={15} /> Listings</Link>
+          <Link to="/about"    style={s.link}>About</Link>
           {user ? (
             <>
               <Link to="/dashboard"    style={s.link}><LayoutDashboard size={15} /> Dashboard</Link>
@@ -64,6 +65,7 @@ export default function Navbar() {
       {open && (
         <div style={s.drawer}>
           <Link to="/listings"  style={s.drawerLink} onClick={close}><Home size={16} /> Listings</Link>
+          <Link to="/about"     style={s.drawerLink} onClick={close}>About</Link>
           {user ? (
             <>
               <Link to="/dashboard" style={s.drawerLink} onClick={close}>

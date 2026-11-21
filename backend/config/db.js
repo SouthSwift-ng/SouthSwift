@@ -40,6 +40,8 @@ const buildInitSqlStatements = () => `
     avatar_url    TEXT,
     state         VARCHAR(100),
     city          VARCHAR(100),
+    referral_code VARCHAR(20) UNIQUE,
+    referred_by   UUID REFERENCES users(id),
     created_at    TIMESTAMP DEFAULT NOW(),
     updated_at    TIMESTAMP DEFAULT NOW()
   );
@@ -235,6 +237,37 @@ const buildInitSqlStatements = () => `
     note           TEXT,
     created_at     TIMESTAMP DEFAULT NOW()
   );
+
+  -- REFERRAL REWARDS (one ₦1,000 credit per completed rental)
+  CREATE TABLE IF NOT EXISTS referral_rewards (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    referrer_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referred_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    deal_id          UUID NOT NULL UNIQUE REFERENCES deals(id) ON DELETE CASCADE,
+    amount           BIGINT NOT NULL DEFAULT 1000 CHECK (amount > 0),
+    status           VARCHAR(20) NOT NULL DEFAULT 'available'
+                     CHECK (status IN ('available','reversed')),
+    created_at       TIMESTAMP DEFAULT NOW()
+  );
+
+  -- WITHDRAWAL REQUESTS (OTP-confirmed, admin reviewed)
+  CREATE TABLE IF NOT EXISTS withdrawal_requests (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount         BIGINT NOT NULL CHECK (amount > 0),
+    account_name   VARCHAR(255) NOT NULL,
+    account_number VARCHAR(20) NOT NULL,
+    bank_code      VARCHAR(10) NOT NULL,
+    bank_name      VARCHAR(255),
+    status         VARCHAR(20) NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','approved','paid','rejected')),
+    admin_note     TEXT,
+    requested_at   TIMESTAMP DEFAULT NOW(),
+    reviewed_by    UUID REFERENCES users(id),
+    reviewed_at    TIMESTAMP,
+    paid_at        TIMESTAMP,
+    updated_at     TIMESTAMP DEFAULT NOW()
+  );
 `;
 
 const initDB = async () => {
@@ -337,6 +370,28 @@ const initDB = async () => {
     await client.query(`
       ALTER TABLE waitlist
         ADD COLUMN IF NOT EXISTS email_error TEXT;
+    `);
+
+    // ── REFERRAL CODES ──────────────────────────────────────────────────────
+    // Existing users get a deterministic code; new users get a random one at
+    // registration. The partial unique index allows the column to start NULL
+    // on databases that already have rows.
+    await client.query(`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS referral_code VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS referred_by   UUID REFERENCES users(id);
+    `);
+    await client.query(`
+      UPDATE users
+      SET referral_code = 'SS' || UPPER(SUBSTRING(MD5(id::text), 1, 6))
+      WHERE referral_code IS NULL;
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_referral_code
+        ON users(referral_code) WHERE referral_code IS NOT NULL;
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by);
     `);
 
     // ── FEE AUDIT COLUMNS (fixed 2.5% agent + 2.5% SouthSwift = 5% total) ──
@@ -557,6 +612,8 @@ const initDB = async () => {
       ALTER TABLE public.otp_verifications  ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.payment_transactions ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.transaction_audit    ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.referral_rewards     ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.withdrawal_requests  ENABLE ROW LEVEL SECURITY;
     `);
 
     // Create performance indexes
@@ -583,6 +640,12 @@ const initDB = async () => {
       -- inspection + rent proofs can pend side-by-side, duplicates stay blocked.
       CREATE UNIQUE INDEX IF NOT EXISTS uniq_pending_txn_per_deal_type
         ON payment_transactions(deal_id, payment_type) WHERE status='pending_review';
+
+      -- Referral / withdrawal lookups
+      CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer ON referral_rewards(referrer_id);
+      CREATE INDEX IF NOT EXISTS idx_referral_rewards_deal     ON referral_rewards(deal_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_user_status    ON withdrawal_requests(user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_status         ON withdrawal_requests(status);
     `);
 
     console.log('✅ All SouthSwift tables initialised');

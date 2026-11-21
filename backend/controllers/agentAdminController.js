@@ -2,6 +2,12 @@
 const { pool } = require('../config/db');
 const axios    = require('axios');
 const { escapeHtml } = require('../utils/escapeHtml');
+const {
+  getBankList,
+  resolveBankAccount,
+  BANK_LIST_UNAVAILABLE_MESSAGE,
+  BANK_RESOLVE_UNAVAILABLE_MESSAGE,
+} = require('../utils/bankCache');
 
 // ── DOJAH VERIFICATION ENGINE ────────────────────────────────────────────────
 const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
@@ -285,31 +291,18 @@ const agentController = {
     } catch (err) { console.error(err.message); res.status(500).json({ error: 'Something went wrong.' }); }
   },
 
-  // GET /api/agents/banks — proxies Paystack /bank so the dropdown shows live, valid
-  // bank codes. Cached in-process for 6h to dodge Paystack rate limits.
+  // GET /api/agents/banks — cached Paystack bank list shared across endpoints.
   getBanks: async (req, res) => {
     try {
-      const now = Date.now();
-      const cache = agentController._bankCache;
-      if (cache && (now - cache.ts) < 6 * 60 * 60 * 1000) return res.json(cache.banks);
-      const r = await axios.get('https://api.paystack.co/bank?country=nigeria', {
-        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
-        timeout: 10000,
-      });
-      const banks = (r.data?.data || [])
-        .map(b => ({ name: b.name, code: b.code }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-      agentController._bankCache = { ts: now, banks };
-      res.json(banks);
+      res.json(await getBankList());
     } catch (err) {
-      console.error('Bank list fetch failed:', err.response?.data?.message || err.message);
-      res.status(502).json({ error: 'Could not fetch bank list. Please try again.' });
+      console.error('Bank list unavailable:', err.message);
+      res.status(503).json({ error: BANK_LIST_UNAVAILABLE_MESSAGE });
     }
   },
 
-  // POST /api/agents/resolve-account — proxies Paystack /bank/resolve so the agent
-  // sees the real account holder name before saving wrong details. Auth required so
-  // this can't be abused as a free account-name lookup service.
+  // POST /api/agents/resolve-account — cached Paystack account lookup. Auth
+  // required so this can't be abused as a free account-name lookup service.
   resolveAccount: async (req, res) => {
     const { account_number, bank_code } = req.body;
     if (!account_number || !bank_code)
@@ -317,20 +310,10 @@ const agentController = {
     if (!/^\d{10}$/.test(String(account_number)))
       return res.status(400).json({ error: 'Account number must be 10 digits.' });
     try {
-      const r = await axios.get(
-        `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(account_number)}&bank_code=${encodeURIComponent(bank_code)}`,
-        {
-          headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
-          timeout: 10000,
-        }
-      );
-      const data = r.data?.data;
-      if (!data?.account_name) return res.status(400).json({ error: 'Account not found at the selected bank.' });
+      const data = await resolveBankAccount(account_number, bank_code);
       res.json({ account_name: data.account_name, account_number: data.account_number });
     } catch (err) {
-      const msg = err.response?.data?.message || 'Could not resolve account. Check the number and bank.';
-      console.warn('Account resolve failed:', msg);
-      res.status(400).json({ error: msg });
+      res.status(400).json({ error: BANK_RESOLVE_UNAVAILABLE_MESSAGE });
     }
   },
 

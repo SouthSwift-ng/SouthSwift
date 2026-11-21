@@ -30,6 +30,7 @@ const waitlistRoutes= require('./routes/waitlist');
 const clientFunnelRoutes = require('./routes/clientFunnel');
 const feedbackRoutes = require('./routes/feedback');
 const shareRoutes = require('./routes/share');
+const referralRoutes = require('./routes/referrals');
 
 const rateLimit = require('express-rate-limit');
 
@@ -104,6 +105,8 @@ app.use('/api/payments', rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message:
 // use it as a paid name-lookup service or burn Paystack quota.
 app.use('/api/agents/resolve-account', rateLimit({ windowMs: 60 * 1000, max: 20, message: { error: 'Too many account lookups. Please wait a moment.' } }));
 app.use('/api/agents/banks',           rateLimit({ windowMs: 60 * 1000, max: 30, message: { error: 'Too many requests.' } }));
+app.use('/api/referrals/withdrawals/request-otp', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: { error: 'Too many withdrawal code requests. Please try again later.' } }));
+app.use('/api/referrals/withdrawals/confirm',     rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: { error: 'Too many verification attempts. Please try again later.' } }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
@@ -189,6 +192,7 @@ app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/client-funnel', clientFunnelRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/share', shareRoutes);
+app.use('/api/referrals', referralRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

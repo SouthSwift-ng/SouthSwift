@@ -2,17 +2,29 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getMyDeals, getMyListings, submitVerification, uploadIntroVideo, deleteListing, getBanks, resolveAccount } from '../utils/api';
+import {
+  getMyDeals, getMyListings, submitVerification, uploadIntroVideo, deleteListing,
+  getBanks, resolveAccount, getReferralSummary,
+} from '../utils/api';
 import ShareListing from '../components/ShareListing';
+import WithdrawModal from '../components/WithdrawModal';
+import BankSearchSelect from '../components/BankSearchSelect';
 import { formatNaira } from '../utils/format';
 import { useAuth } from '../App';
-import { Shield, Home, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
+import { Shield, Home, CheckCircle, Gift, Copy, Wallet } from 'lucide-react';
 
 const G = '#1B4332'; const GOLD = '#C8963C';
 
 const statusColor = { initiated:'#888', payment_pending:'#F59E0B', escrow_held:'#3B82F6',
   docs_generated:'#8B5CF6', movein_pending:'#F59E0B', completed:'#22C55E',
   disputed:'#EF4444', cancelled:'#9CA3AF' };
+
+const withdrawalMeta = {
+  pending:  { background:'#FEF3C7', color:'#92400E' },
+  approved: { background:'#DBEAFE', color:'#1E40AF' },
+  paid:     { background:'#DCFCE7', color:'#166534' },
+  rejected: { background:'#FEE2E2', color:'#DC2626' },
+};
 
 export function Dashboard() {
   const { user }           = useAuth();
@@ -28,6 +40,9 @@ export function Dashboard() {
   const [resolveError, setResolveError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [referral, setReferral] = useState(null);
+  const [referralLoading, setReferralLoading] = useState(true);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   const requestDelete = (l) => setDeleteTarget(l);
 
@@ -63,9 +78,16 @@ export function Dashboard() {
       setMyListings(r.data);
     }).catch(()=>{});
 
+  const refreshReferral = () =>
+    getReferralSummary()
+      .then(r => setReferral(r.data))
+      .catch(() => {})
+      .finally(() => setReferralLoading(false));
+
   useEffect(() => {
     if (!user?.role) return; // wait until ProtectedRoute resolves the user
     getMyDeals().then(r => setDeals(r.data)).catch(()=>{});
+    refreshReferral();
     if (['agent','admin'].includes(user.role)) {
       refreshMyListings();
       getBanks().then(r => setBanks(r.data)).catch(()=>{}); // best-effort; dropdown stays empty if down
@@ -151,7 +173,8 @@ export function Dashboard() {
           {[['🛡️', deals.length, 'Total Deals'],
             ['✅', deals.filter(d=>d.status==='completed').length, 'Completed'],
             ['⏳', deals.filter(d=>['escrow_held','docs_generated'].includes(d.status)).length, 'In Escrow'],
-            ['🏠', myListings.length, 'My Listings']].map(([icon,num,label])=>(
+            ['🏠', myListings.length, 'My Listings'],
+            ['🎁', `₦${formatNaira(referral?.balance || 0)}`, 'Referral Balance']].map(([icon,num,label])=>(
             <div key={label} style={s.statCard}>
               <div style={s.statNum}>{num}</div>
               <div style={s.statLabel}>{label}</div>
@@ -161,9 +184,14 @@ export function Dashboard() {
 
         {/* Tabs */}
         <div style={s.tabs}>
-          {['deals','listings','verification'].map(t=>(
+          {[
+            ['deals','My Deals'],
+            ['listings','My Listings'],
+            ...(['agent','admin'].includes(user?.role) ? [['verification','Agent Verification']] : []),
+            ['rewards','Rewards'],
+          ].map(([t,label])=>(
             <button key={t} onClick={()=>setTab(t)} style={{...s.tab, ...(tab===t?s.tabActive:{})}}>
-              {t==='deals'?'My Deals':t==='listings'?'My Listings':'Agent Verification'}
+              {label}
             </button>
           ))}
         </div>
@@ -255,12 +283,17 @@ export function Dashboard() {
                 onChange={e=>setVerForm(f=>({...f,bio:e.target.value}))} />
               <div>
                 <label style={s.label}>Bank</label>
-                <select style={s.input}
+                <BankSearchSelect
+                  banks={banks}
                   value={verForm.bank_code || ''}
-                  onChange={e => setVerForm(f => ({...f, bank_code: e.target.value, account_name: ''}))}>
-                  <option value="">{banks.length ? 'Select your bank' : 'Loading banks…'}</option>
-                  {banks.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
-                </select>
+                  loading={!banks.length}
+                  inputStyle={s.input}
+                  onChange={bank => setVerForm(f => ({
+                    ...f,
+                    bank_code: bank?.code || '',
+                    account_name: '',
+                  }))}
+                />
               </div>
               <div>
                 <label style={s.label}>Bank Account Number</label>
@@ -308,7 +341,124 @@ export function Dashboard() {
           </div>
           </>
         )}
+
+        {/* Rewards */}
+        {tab==='rewards' && (
+          <div>
+            {referralLoading ? (
+              <div style={s.empty}>Loading your rewards…</div>
+            ) : (
+              <>
+                <div style={s.rewardHero}>
+                  <div>
+                    <div style={s.rewardLabel}>Available balance</div>
+                    <div style={s.rewardBalance}>₦{formatNaira(referral?.balance || 0)}</div>
+                    <div style={s.rewardSub}>
+                      Earn ₦1,000 each time someone you refer completes a rental.
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setWithdrawOpen(true)}
+                    disabled={(referral?.balance || 0) < (referral?.min_withdrawal || 1000) || !!referral?.pending_withdrawal}
+                    style={{
+                      ...s.withdrawBtn,
+                      opacity: ((referral?.balance || 0) < (referral?.min_withdrawal || 1000) || referral?.pending_withdrawal) ? 0.55 : 1,
+                    }}
+                  >
+                    <Wallet size={16} /> Withdraw
+                  </button>
+                </div>
+
+                {referral?.pending_withdrawal && (
+                  <div style={s.pendingBox}>
+                    A withdrawal of ₦{formatNaira(referral.pending_withdrawal.amount)} is{' '}
+                    <strong>{referral.pending_withdrawal.status}</strong>. You can withdraw again once it is resolved.
+                  </div>
+                )}
+
+                <div style={s.shareCard}>
+                  <div>
+                    <div style={s.shareLabel}>Your referral code</div>
+                    <div style={s.shareCode}>{referral?.referral_code || '—'}</div>
+                  </div>
+                  <div style={s.shareActions}>
+                    <button
+                      style={s.copyBtn}
+                      onClick={() => {
+                        navigator.clipboard?.writeText(referral?.referral_code || '');
+                        toast.success('Referral code copied.');
+                      }}
+                    >
+                      <Copy size={13} /> Copy code
+                    </button>
+                    <button
+                      style={s.copyBtn}
+                      onClick={() => {
+                        const link = referral?.referral_link || `${window.location.origin}/register?ref=${referral?.referral_code || ''}`;
+                        navigator.clipboard?.writeText(link);
+                        toast.success('Referral link copied.');
+                      }}
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                </div>
+
+                <h3 style={s.rewardSectionTitle}>Reward history</h3>
+                {referral?.rewards?.length ? (
+                  <div style={s.rewardList}>
+                    {referral.rewards.map(r => (
+                      <div key={r.id} style={s.rewardRow}>
+                        <div>
+                          <div style={s.rewardRowTitle}>{r.referred_name || 'Referred user'}</div>
+                          <div style={s.rewardRowSub}>
+                            {r.listing_title || 'Property rental'} · {new Date(r.created_at).toLocaleDateString('en-NG')}
+                          </div>
+                        </div>
+                        <div style={s.rewardAmount}>+₦{formatNaira(r.amount)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={s.empty}>
+                    <Gift size={36} color="#DDD" />
+                    <p>No rewards yet. Share your code to start earning.</p>
+                  </div>
+                )}
+
+                <h3 style={s.rewardSectionTitle}>Withdrawals</h3>
+                {referral?.withdrawals?.length ? (
+                  <div style={s.rewardList}>
+                    {referral.withdrawals.map(w => (
+                      <div key={w.id} style={s.rewardRow}>
+                        <div>
+                          <div style={s.rewardRowTitle}>₦{formatNaira(w.amount)}</div>
+                          <div style={s.rewardRowSub}>
+                            {w.bank_name || 'Bank'} · {w.account_number} · {new Date(w.requested_at).toLocaleDateString('en-NG')}
+                          </div>
+                          {w.admin_note && <div style={s.rewardRowNote}>{w.admin_note}</div>}
+                        </div>
+                        <div style={{ ...s.withdrawalBadge, ...(withdrawalMeta[w.status] || {}) }}>
+                          {w.status}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={s.rewardEmpty}>No withdrawal requests yet.</div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      <WithdrawModal
+        open={withdrawOpen}
+        onClose={() => setWithdrawOpen(false)}
+        summary={referral}
+        onSuccess={refreshReferral}
+      />
 
       {/* Delete confirmation modal */}
       {deleteTarget && (
@@ -388,6 +538,37 @@ const s = {
                 borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14 },
   modalDelete:{ flex:1, background:'#DC2626', color:'white', border:'none', padding:'11px',
                 borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:14 },
+
+  rewardHero:{ background:G, borderRadius:16, padding:'24px', color:'white', display:'flex',
+               justifyContent:'space-between', alignItems:'center', gap:16, flexWrap:'wrap',
+               marginBottom:14 },
+  rewardLabel:{ fontSize:11, fontWeight:800, letterSpacing:1.5, textTransform:'uppercase', color:GOLD },
+  rewardBalance:{ fontSize:34, fontWeight:900, margin:'4px 0 6px', fontFamily:'Georgia,serif' },
+  rewardSub:{ fontSize:12, color:'rgba(255,255,255,0.7)', lineHeight:1.6 },
+  withdrawBtn:{ display:'flex', alignItems:'center', gap:7, background:GOLD, color:'white', border:'none',
+                padding:'12px 22px', borderRadius:10, cursor:'pointer', fontWeight:800, fontSize:14 },
+  pendingBox:{ background:'#FEF3C7', border:'1px solid #FDE68A', color:'#92400E', borderRadius:10,
+               padding:'12px 14px', fontSize:12.5, lineHeight:1.6, marginBottom:14 },
+  shareCard:{ background:'white', border:'1px solid #E5E7EB', borderRadius:12, padding:'18px 20px',
+              display:'flex', justifyContent:'space-between', alignItems:'center', gap:14,
+              flexWrap:'wrap', marginBottom:22 },
+  shareLabel:{ fontSize:11, fontWeight:700, color:'#888', textTransform:'uppercase', letterSpacing:1, marginBottom:4 },
+  shareCode:{ fontSize:20, fontWeight:900, color:G, fontFamily:'Courier New,monospace', letterSpacing:2 },
+  shareActions:{ display:'flex', gap:8, flexWrap:'wrap' },
+  copyBtn:{ display:'flex', alignItems:'center', gap:5, background:'#F0F9F0', color:G,
+            border:'1px solid #BBF7D0', padding:'8px 12px', borderRadius:8, cursor:'pointer',
+            fontWeight:700, fontSize:12 },
+  rewardSectionTitle:{ fontSize:15, fontWeight:800, color:'#111', margin:'0 0 10px' },
+  rewardList:{ background:'white', border:'1px solid #E5E7EB', borderRadius:12, overflow:'hidden', marginBottom:22 },
+  rewardRow:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12,
+              padding:'13px 16px', borderBottom:'1px solid #F3F4F6' },
+  rewardRowTitle:{ fontSize:13.5, fontWeight:700, color:'#111', marginBottom:2 },
+  rewardRowSub:{ fontSize:11.5, color:'#888' },
+  rewardRowNote:{ fontSize:11.5, color:'#92400E', marginTop:4 },
+  rewardAmount:{ fontSize:14, fontWeight:800, color:'#16A34A', whiteSpace:'nowrap' },
+  withdrawalBadge:{ fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:0.6,
+                    padding:'4px 9px', borderRadius:20 },
+  rewardEmpty:{ fontSize:13, color:'#888', padding:'16px 0 24px' },
 };
 
 export default Dashboard;

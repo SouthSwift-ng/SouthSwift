@@ -169,6 +169,20 @@ export const getAllUsers       = ()               => API.get('/admin/users');
 export const getAllListings    = ()               => API.get('/admin/listings');
 export const deleteListingsBulk = (ids)            => API.delete('/admin/listings', { data: { ids } });
 
+// ── REFERRALS & WITHDRAWALS ───────────────────────────────────────────────────
+export const getReferralSummary     = ()       => API.get('/referrals/summary');
+export const getReferralBanks       = ()       => API.get('/referrals/banks');
+export const resolveReferralAccount = (account_number, bank_code) =>
+  API.post('/referrals/resolve-account', { account_number, bank_code });
+export const requestWithdrawalOtp   = (data)   => API.post('/referrals/withdrawals/request-otp', data);
+export const confirmWithdrawal      = (otp_code) =>
+  API.post('/referrals/withdrawals/confirm', { otp_code });
+
+// ── ADMIN: WITHDRAWALS ────────────────────────────────────────────────────────
+export const getWithdrawalRequests = (status) =>
+  API.get('/admin/withdrawals', { params: status ? { status } : {} });
+export const reviewWithdrawal = (id, data) => API.put(`/admin/withdrawals/${id}`, data);
+
 // ── ADMIN: TRANSFER REVIEW / AUDIT ───────────────────────────────────────────
 export const getTransactions    = (status) => API.get('/admin/transactions', { params: status ? { status } : {} });
 export const getTransaction     = (id)     => API.get(`/admin/transactions/${id}`);

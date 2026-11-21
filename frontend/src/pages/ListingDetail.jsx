@@ -842,11 +842,6 @@ export default function ListingDetail() {
                                  {inspPaying ? 'Starting…' : `Agree & Pay ₦${Number(inspectionDeal?.inspection_fee ?? listing.inspection_fee).toLocaleString()} →`}
                                </button>
                              </div>
-                             <div style={{textAlign:'center', marginTop:8}}>
-                               <button onClick={() => setSkipConfirm(true)} style={{background:'none', border:'none', color:G, cursor:'pointer', fontSize:12, textDecoration:'underline'}}>
-                                 Skip inspection & pay rent directly
-                               </button>
-                             </div>
                            </>
                          ) : (
                           <>
@@ -884,12 +879,23 @@ export default function ListingDetail() {
                                 {inspSubmitting ? 'Submitting…' : 'Submit Proof'}
                               </button>
                             </div>
-                          </>
-                        )}
-                      </>
-                    )}
+                           </>
+                         )}
 
-                    {step === 'swiftcounsel' && (
+                         {!inspectionDeal?.has_paid_inspection &&
+                          !inspectionDeal?.inspection_skipped &&
+                          !(inspTxn && inspTxn.status === 'pending_review') &&
+                          !skipConfirm && (
+                           <div style={{textAlign:'center', marginTop:10}}>
+                             <button onClick={() => setSkipConfirm(true)} style={{background:'none', border:'none', color:G, cursor:'pointer', fontSize:12, textDecoration:'underline'}}>
+                               Skip inspection & pay rent directly
+                             </button>
+                           </div>
+                         )}
+                       </>
+                     )}
+
+                     {step === 'swiftcounsel' && (
                       <>
                         <h4 style={{margin:'14px 0 6px', fontSize:14, color:G, fontWeight:800}}>⚖️ SwiftCounsel — Legal Review</h4>
                         <p style={{fontSize:12, color:'#666', margin:'0 0 12px'}}>

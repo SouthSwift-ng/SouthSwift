@@ -1,8 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
 const { pool } = require('../config/db');
-const { sendWelcomeEmail, generateOTP, sendOTPEmail } = require('../utils/emailService');
+const { sendWelcomeEmail, sendOTPEmail, sendReferralSignupEmail, generateOTP } = require('../utils/emailService');
 const { redis } = require('../config/redis');
+const { generateReferralCode, normalizeReferralCode } = require('../utils/referral');
 
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -35,7 +36,7 @@ const issueOTP = async (email, userId, fullName) => {
 
 // POST /api/auth/register
 const register = async (req, res) => {
-  const { full_name, email, phone, password, role, state, city } = req.body;
+  const { full_name, email, phone, password, role, state, city, referral_code } = req.body;
 
   if (!full_name || !email || !phone || !password)
     return res.status(400).json({ error: 'All fields are required.' });
@@ -50,11 +51,35 @@ const register = async (req, res) => {
     const exists = await pool.query('SELECT id FROM users WHERE email=$1 OR phone=$2', [email, phone]);
     if (exists.rows.length) return res.status(400).json({ error: 'Account Registered. Please check your details or try logging in.' });
 
+    // Resolve an optional referral code before creating the account.
+    let referredBy = null;
+    const normalizedCode = normalizeReferralCode(referral_code);
+    if (normalizedCode) {
+      const referrer = await pool.query(
+        'SELECT id FROM users WHERE UPPER(referral_code)=$1',
+        [normalizedCode]
+      );
+      if (!referrer.rows.length) {
+        return res.status(400).json({ error: 'Invalid referral code. Please check it and try again.' });
+      }
+      referredBy = referrer.rows[0].id;
+    }
+
+    // Generate a unique referral code for the new account.
+    let ownReferralCode = generateReferralCode();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const taken = await pool.query('SELECT 1 FROM users WHERE referral_code=$1', [ownReferralCode]);
+      if (!taken.rows.length) break;
+      ownReferralCode = generateReferralCode();
+    }
+
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, phone, password_hash, role, state, city, is_verified)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,false) RETURNING id, full_name, email, role, is_verified`,
-      [full_name, email, phone, hash, userRole, state||null, city||null]
+      `INSERT INTO users (full_name, email, phone, password_hash, role, state, city, is_verified,
+                          referral_code, referred_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9)
+       RETURNING id, full_name, email, role, is_verified, referral_code`,
+      [full_name, email, phone, hash, userRole, state||null, city||null, ownReferralCode, referredBy]
     );
 
     const user = result.rows[0];
@@ -67,6 +92,16 @@ const register = async (req, res) => {
       );
     }
 
+    // Let the referrer know someone used their code (best-effort, non-blocking).
+    if (referredBy) {
+      pool.query('SELECT full_name, email FROM users WHERE id=$1', [referredBy])
+        .then(r => {
+          const referrer = r.rows[0];
+          if (referrer?.email) sendReferralSignupEmail(referrer.email, referrer.full_name, full_name);
+        })
+        .catch(() => {});
+    }
+
     // Generate and store OTP in Redis
     await issueOTP(email, user.id, full_name);
 
@@ -77,7 +112,8 @@ const register = async (req, res) => {
         full_name: user.full_name, 
         email: user.email, 
         role: user.role,
-        is_verified: false 
+        is_verified: false,
+        referral_code: user.referral_code,
       },
       requiresVerification: true
     });
@@ -138,7 +174,7 @@ const getMe = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.role, u.is_verified,
-              u.state, u.city, u.avatar_url, u.created_at,
+              u.state, u.city, u.avatar_url, u.referral_code, u.referred_by, u.created_at,
               ap.verification_status, ap.agency_name, ap.total_deals, ap.rating
        FROM users u
        LEFT JOIN agent_profiles ap ON ap.user_id = u.id

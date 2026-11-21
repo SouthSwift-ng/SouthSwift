@@ -18,4 +18,12 @@ test('initialization SQL includes the expanded SouthSwift schema fields', () => 
   assert.match(sql, /inspection_fee\s+BIGINT/i);
   assert.match(sql, /has_paid_inspection\s+BOOLEAN/i);
   assert.match(sql, /payment_type.*CHECK.*rent.*inspection|CHECK\s*\(payment_type IN \('rent','inspection'\)/i);
+
+  // Referral programme
+  assert.match(sql, /referral_code\s+VARCHAR\(20\)\s+UNIQUE/i);
+  assert.match(sql, /referred_by\s+UUID\s+REFERENCES users\(id\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS referral_rewards/i);
+  assert.match(sql, /deal_id\s+UUID\s+NOT NULL UNIQUE/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_requests/i);
+  assert.match(sql, /CHECK \(status IN \('pending','approved','paid','rejected'\)\)/i);
 });

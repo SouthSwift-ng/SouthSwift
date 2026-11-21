@@ -73,6 +73,7 @@ export default function LandingPage() {
             <a href="/register?role=agent" style={s.navLink}>List a Property</a>
             <button onClick={() => document.getElementById('how-it-works').scrollIntoView({behavior:'smooth'})} style={s.navLinkBtn}>How It Works</button>
             <a href="/register?role=agent" style={s.navLink}>For Agents</a>
+            <a href="/about" style={s.navLink}>About</a>
             <button onClick={() => document.getElementById('escrow').scrollIntoView({behavior:'smooth'})} style={s.navLinkBtn}>Security &amp; Escrow</button>
           </div>
           <a href="/login" style={s.signInBtn}>Sign In</a>
@@ -91,7 +92,8 @@ export default function LandingPage() {
               Money Is Protected.
             </h1>
             <p style={s.heroSub}>
-              A secure rental platform with escrow protection, verified listings, and digital legal agreements.
+              A trusted way to find a home in Nigeria, with verified agents, escrow-protected payments
+              and fees shown upfront.
             </p>
             <div style={s.heroBtns}>
               <button onClick={() => navigate('/listings')} style={s.heroBtnPrimary}>Find a Property</button>
@@ -108,20 +110,20 @@ export default function LandingPage() {
                 style={s.heroImg}
                 onError={e => { e.target.style.background='#E8E4DC'; e.target.src=''; }}
               />
-              {/* Lawyer badge — top right */}
+              {/* Verified badge — top right */}
               <div style={s.lawyerBadge}>
-                <div style={s.lawyerAvatar}>AR</div>
+                <div style={s.lawyerAvatar}>✓</div>
                 <div>
-                  <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>Aaron R.</div>
-                  <div style={{ fontSize:11, color:'#22C55E', fontWeight:600 }}>Certified lawyer</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:'#111' }}>Verified listing</div>
+                  <div style={{ fontSize:11, color:'#22C55E', fontWeight:600 }}>Identity checked</div>
                 </div>
               </div>
               {/* Feature pills — bottom left, stacked vertically */}
               <div style={s.heroPills}>
                 {[
-                  { icon:'⚖️', title:'Legal Support',       sub:'In-app lawyers' },
-                  { icon:'💬', title:'In-App Chat & Calls', sub:'Direct communication' },
-                  { icon:'🧾', title:'No illegal fees',     sub:'Transparent paywall' },
+                  { icon:'✅', title:'Verified agents',   sub:'Identity reviewed' },
+                  { icon:'💬', title:'In-App Chat',       sub:'Talk inside SouthSwift' },
+                  { icon:'🧾', title:'Fees shown upfront',sub:'No hidden charges' },
                 ].map(p => (
                   <div key={p.title} style={s.heroPill}>
                     <span style={{ fontSize:18 }}>{p.icon}</span>
@@ -141,10 +143,10 @@ export default function LandingPage() {
       <div style={s.trustBar}>
         <div style={s.trustBarInner}>
           {[
-            { icon:'🔒', title:'Secure payments',     sub:'Escrow-based' },
-            { icon:'📋', title:'Transparent terms',   sub:'No hidden conditions' },
-            { icon:'✅', title:'No unverified agents',sub:'KYC for all agents' },
-            { icon:'📄', title:'No paper contracts',  sub:'Do all online' },
+            { icon:'🔒', title:'Escrow-protected',      sub:'Released after move-in' },
+            { icon:'🧾', title:'Fees shown upfront',    sub:'No hidden charges' },
+            { icon:'✅', title:'Agent checks',          sub:'Identity reviewed' },
+            { icon:'🤝', title:'One place for everyone', sub:'Agents, landlords & agencies' },
           ].map(t => (
             <div key={t.title} style={s.trustItem}>
               <span style={{ fontSize:22 }}>{t.icon}</span>
@@ -200,7 +202,7 @@ export default function LandingPage() {
               </div>
               <input
                 style={s.searchInput}
-                placeholder="Enter an address, city or ZIP code"
+                placeholder="Enter a city or area, e.g. Ado-Ekiti"
                 value={searchQuery}
                 onChange={e => setSearch(e.target.value)}
                 onKeyDown={e => e.key==='Enter' && navigate(`/listings?city=${searchQuery}`)}
@@ -213,43 +215,21 @@ export default function LandingPage() {
             </div>
 
             <div style={s.searchMeta}>
-              <span style={{ color:'#555', fontSize:13 }}>9,238 rentals available</span>
-              <span style={{ color:'#888', fontSize:13 }}>Newest first</span>
+              <span style={{ color:'#555', fontSize:13 }}>Now live in Ado-Ekiti</span>
+              <span style={{ color:'#888', fontSize:13 }}>More cities soon</span>
             </div>
 
-            {/* Sample listing cards */}
-            {[
-              {
-                badge:'Verified',
-                title:'2-room apartment in the city center',
-                addr:'Igwe Orizu Rd, Nnewi, Anambra 234046',
-                price:'₦1.5M / monthly',
-                img:'https://images.pexels.com/photos/1457842/pexels-photo-1457842.jpeg?auto=compress&cs=tinysrgb&w=200&h=150',
-              },
-              {
-                badge:'Verified',
-                title:'Single-room apartment',
-                addr:'Mr. John Doe, 15 Adeola Odeku Street, Victoria Island, Lagos 101241',
-                price:'₦800K / monthly',
-                img:'https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg?auto=compress&cs=tinysrgb&w=200&h=150',
-              },
-            ].map((l,i) => (
-              <div key={i} style={s.listingCard} onClick={() => navigate('/listings')}>
-                <div style={s.listingImg}>
-                  <img src={l.img} alt={l.title} style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}
-                    onError={e => { e.target.style.display='none'; }} />
-                  <div style={s.listingBadge}>{l.badge}</div>
-                </div>
-                <div style={s.listingInfo}>
-                  <div style={s.listingTitle}>{l.title}</div>
-                  <div style={s.listingAddr}>{l.addr}</div>
-                  <div style={s.listingPrice}>{l.price}</div>
-                </div>
-              </div>
-            ))}
+            <div style={s.launchNote}>
+              <div style={s.launchTitle}>Find hostels, apartments and homes</div>
+              <ul style={s.launchList}>
+                <li>Browse verified listings and chat with the agent or landlord inside SouthSwift.</li>
+                <li>Inspection fees and rent are shown upfront — no hidden charges.</li>
+                <li>Your rent stays in escrow until you move in and confirm.</li>
+              </ul>
+            </div>
 
             <button onClick={() => navigate('/listings')} style={s.showAllBtn}>
-              Show all →
+              Browse verified listings →
             </button>
           </div>
         </div>
@@ -260,14 +240,14 @@ export default function LandingPage() {
         <div style={s.escrowInner}>
           <h2 style={s.escrowTitle}>Escrow you can trust</h2>
           <p style={s.escrowSub}>
-            A transparent, step-by-step escrow flow with legal review, key confirmation, and instant dispute protection.
+            A transparent, step-by-step escrow flow that protects your rent until you move in and confirm.
           </p>
           <div style={s.escrowSteps}>
             {[
-              { num:'01', icon:'💳', title:'Deposit',  sub:'Money deposited in SouthSwift vault' },
-              { num:'02', icon:'⏱️', title:'Review',   sub:'Agreement reviewed by in-app lawyer' },
-              { num:'03', icon:'✅', title:'Confirm',  sub:'Key handover confirmed by tenant' },
-              { num:'04', icon:'💳', title:'Release',  sub:'Funds released to landlord' },
+              { num:'01', icon:'💳', title:'Deposit',  sub:'Pay into SouthSwift escrow, not a personal account' },
+              { num:'02', icon:'🔍', title:'Inspect',  sub:'Visit the property; inspection fee shown upfront' },
+              { num:'03', icon:'✅', title:'Confirm',  sub:'Move in and confirm in the app' },
+              { num:'04', icon:'🏦', title:'Release',  sub:'We release payment to the agent or landlord' },
             ].map((step,i) => (
               <div key={i} style={s.escrowStep}>
                 <div style={s.escrowStepNum}>{step.num}. {step.title}</div>
@@ -286,10 +266,11 @@ export default function LandingPage() {
           <p style={s.sectionSub}>From search to move-in — every step protected.</p>
           <div style={s.howGrid}>
             {[
-              { step:'1', title:'Find a Verified Listing', body:'Browse thousands of properties verified by SouthSwift. Every agent has been identity-checked.', icon:'🔍' },
-              { step:'2', title:'Pay into SwiftShield Escrow', body:'Your rent is held securely. Not a single naira reaches the agent until you confirm move-in.', icon:'🛡️' },
-              { step:'3', title:'Inspect & Confirm Move-In', body:'Visit the property. If it matches the listing, tap to confirm. Funds release instantly to the agent.', icon:'🏠' },
-              { step:'4', title:'Get Your SwiftDoc Agreement', body:'A legally-binding AI-generated tenancy agreement is emailed to both parties automatically.', icon:'📋' },
+              { step:'1', title:'Find a Listing', body:'Browse verified listings and chat with the agent or landlord inside SouthSwift.', icon:'🔍' },
+              { step:'2', title:'Inspect the Property', body:'Visit the property. A small inspection fee applies, shown upfront.', icon:'🏠' },
+              { step:'3', title:'Pay into Escrow', body:'Pay into escrow, not to a personal account. Your rent is held safely.', icon:'🛡️' },
+              { step:'4', title:'Move In & Confirm', body:'Move in and confirm in the app once everything matches the listing.', icon:'✅' },
+              { step:'5', title:'We Release Payment', body:'We release the payment to the agent or landlord after you confirm.', icon:'🏦' },
             ].map((item,i) => (
               <div key={i} style={s.howCard}>
                 <div style={s.howStep}>Step {item.step}</div>
@@ -306,13 +287,13 @@ export default function LandingPage() {
         <div style={s.agentInner}>
           <div style={s.agentLeft}>
             <div style={s.agentTag}>For Agents</div>
-            <h2 style={s.agentTitle}>Build Trust. Close Deals Faster.</h2>
+            <h2 style={s.agentTitle}>Grow With a Platform Built on Trust.</h2>
             <p style={s.agentBody}>
-              Get your green Verified badge, list properties with zero paper hassle, and receive rent payments
-              directly to your bank account the moment your tenant confirms move-in.
+              Join a trusted platform built for honest agents, landlords, developers and agencies.
+              Get verified, list your properties, and connect with serious, ready-to-pay clients.
             </p>
             <ul style={s.agentList}>
-              {['Free identity verification','Automatic tenancy agreements','Same-day bank transfers','No fake tenants — escrow filters them out'].map(item => (
+              {['Identity and business details reviewed','Escrow-protected rent payments','Fees shown upfront','One platform for agents, landlords and agencies'].map(item => (
                 <li key={item} style={s.agentListItem}>✓ {item}</li>
               ))}
             </ul>
@@ -322,13 +303,13 @@ export default function LandingPage() {
           </div>
           <div style={s.agentRight}>
             <div style={s.agentCard}>
-              <div style={s.agentCardAvatar}>AO</div>
-              <div style={s.agentCardName}>Agent Oluwaseun</div>
+              <div style={s.agentCardAvatar}>✓</div>
+              <div style={s.agentCardName}>Verified Professional</div>
               <div style={s.agentCardBadge}>✅ SouthSwift Verified</div>
               <div style={s.agentCardStats}>
-                <div style={s.agentStat}><div style={s.agentStatNum}>47</div><div style={s.agentStatLabel}>Deals</div></div>
-                <div style={s.agentStat}><div style={s.agentStatNum}>4.9</div><div style={s.agentStatLabel}>Rating</div></div>
-                <div style={s.agentStat}><div style={s.agentStatNum}>2yr</div><div style={s.agentStatLabel}>Active</div></div>
+                <div style={s.agentStat}><div style={s.agentStatNum}>ID</div><div style={s.agentStatLabel}>Checked</div></div>
+                <div style={s.agentStat}><div style={s.agentStatNum}>✓</div><div style={s.agentStatLabel}>Fees upfront</div></div>
+                <div style={s.agentStat}><div style={s.agentStatNum}>🔒</div><div style={s.agentStatLabel}>Escrow</div></div>
               </div>
             </div>
           </div>
@@ -340,14 +321,14 @@ export default function LandingPage() {
         <div style={s.uniInner}>
           <h2 style={s.uniTitle}>Starting Where Trust Matters Most.</h2>
           <p style={s.uniBody}>
-            Securing residential rentals, student housing networks, and commercial properties across
-            Nigeria's high-growth urban corridors and major educational hubs.
+            We launched in Ado-Ekiti on 1 August 2026 to serve students, corps members and families who
+            rent often. From there, we plan to grow into Akure, Ibadan, Lagos and Abuja.
           </p>
           <div style={s.uniPoints}>
             {[
-              { icon:'📍', title:'Proximity Search', body:'Find homes by landmarks you know — not vague directions.' },
-              { icon:'🛡️', title:'Escrow Safety', body:'Your money is only released when you are satisfied.' },
-              { icon:'⚖️', title:'Legal Peace of Mind', body:'Professional tenancy agreements included with every deal.' },
+              { icon:'📍', title:'Starting in Ado-Ekiti', body:'Built for students, corps members and families who rent often.' },
+              { icon:'🛡️', title:'Escrow Safety', body:'Your rent is only released after you move in and confirm.' },
+              { icon:'🧾', title:'Fees Shown Upfront', body:'No hidden charges and no middleman games.' },
             ].map(p => (
               <div key={p.title} style={s.uniPoint}>
                 <div>
@@ -367,14 +348,14 @@ export default function LandingPage() {
           <div style={s.footerTop}>
             <div style={s.footerBrand}>
               <span style={s.footerLogo}>SouthSwift</span>
-              <p style={s.footerTagline}>Nigeria's Verified Property Transaction Platform</p>
+              <p style={s.footerTagline}>Trust infrastructure for Nigerian real estate</p>
               <p style={{ fontSize:11, color:'rgba(255,255,255,0.35)', marginTop:4 }}>CAC BN 7310264</p>
             </div>
             <div style={s.footerCols}>
               <div style={s.footerCol}>
                 <div style={s.footerColTitle}>Platform</div>
                 <a href="/listings" style={s.footerLink}>Browse Listings</a>
-               
+                <a href="/about" style={s.footerLink}>About SouthSwift</a>
                 <a href="/register?role=agent" style={s.footerLink}>For Agents</a>
                 <a href="/register?role=landlord" style={s.footerLink}>For Landlords</a>
               </div>
@@ -386,7 +367,7 @@ export default function LandingPage() {
               </div>
               <div style={s.footerCol}>
                 <div style={s.footerColTitle}>Contact</div>
-                <a href="mailto:hello@southswift.com.ng" style={s.footerLink}>hello@southswift.com.ng</a>
+                <a href="mailto:ceo@southswift.com.ng" style={s.footerLink}>ceo@southswift.com.ng</a>
                 <a href="tel:+2348168185692" style={s.footerLink}>+234 816 818 5692</a>
                 <a href="https://southswift.com.ng" style={s.footerLink}>southswift.com.ng</a>
               </div>
@@ -490,6 +471,10 @@ const s = {
   listingPrice: { fontSize:14, fontWeight:800, color:G },
   showAllBtn:   { width:'100%', textAlign:'right', background:'none', border:'none',
                   color:G, fontSize:13, fontWeight:700, cursor:'pointer', padding:'8px 0', marginTop:8 },
+  launchNote:   { background:'#F8FAF8', border:'1px solid #E5E7EB', borderRadius:10,
+                  padding:'16px 18px', marginTop:4 },
+  launchTitle:  { fontSize:14, fontWeight:800, color:'#111', marginBottom:10 },
+  launchList:   { margin:0, paddingLeft:18, color:'#666', fontSize:13, lineHeight:1.9 },
 
   // Escrow
   escrowSection:{ padding:'80px 24px', background:'#F8FAF8' },
