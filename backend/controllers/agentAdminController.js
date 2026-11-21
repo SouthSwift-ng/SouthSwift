@@ -1,6 +1,6 @@
 // ── AGENT CONTROLLER ─────────────────────────────────────────────────────────
 const { pool } = require('../config/db');
-const axios    = require('axios');
+const axios = require('axios');
 const { escapeHtml } = require('../utils/escapeHtml');
 const {
   getBankList,
@@ -12,12 +12,12 @@ const {
 // ── DOJAH VERIFICATION ENGINE ────────────────────────────────────────────────
 const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
   const headers = {
-    'AppId':         process.env.DOJAH_APP_ID,
+    'AppId': process.env.DOJAH_APP_ID,
     'Authorization': process.env.DOJAH_API_KEY,
-    'Content-Type':  'application/json',
+    'Content-Type': 'application/json',
   };
 
-  const result = { nin_match:false, face_score:0, auto_verified:false, auto_rejected:false, reason:'' };
+  const result = { nin_match: false, face_score: 0, auto_verified: false, auto_rejected: false, reason: '' };
 
   try {
     // Step 1 — NIN lookup via Dojah/NIMC
@@ -34,9 +34,9 @@ const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
     }
 
     // Name match — at least 1 name part must match
-    const ninFullName    = `${ninData.firstname||''} ${ninData.middlename||''} ${ninData.surname||''}`.toLowerCase().trim();
-    const nameParts      = agent_name.toLowerCase().split(' ').filter(Boolean);
-    result.nin_match     = nameParts.some(part => ninFullName.includes(part));
+    const ninFullName = `${ninData.firstname || ''} ${ninData.middlename || ''} ${ninData.surname || ''}`.toLowerCase().trim();
+    const nameParts = agent_name.toLowerCase().split(' ').filter(Boolean);
+    result.nin_match = nameParts.some(part => ninFullName.includes(part));
 
     if (!result.nin_match) {
       result.auto_rejected = true;
@@ -55,7 +55,7 @@ const verifyWithDojah = async ({ nin, selfie_url, agent_name, user_id }) => {
         const confidence = faceRes.data?.entity?.confidence || 0;
         result.face_score = Math.round(confidence * 100);
 
-        if      (result.face_score >= 75) result.auto_verified = true;
+        if (result.face_score >= 75) result.auto_verified = true;
         else if (result.face_score >= 45) result.reason = `Face match ${result.face_score}% — queued for manual review.`;
         else {
           result.auto_rejected = true;
@@ -118,7 +118,7 @@ const agentController = {
     if (!nin) return res.status(400).json({ error: 'NIN is required for verification.' });
 
     const id_document_url = req.files?.id_document?.[0]?.path || null;
-    const selfie_url      = req.files?.selfie?.[0]?.path || null;
+    const selfie_url = req.files?.selfie?.[0]?.path || null;
 
     try {
       // Save docs first
@@ -128,9 +128,9 @@ const agentController = {
             account_number=$6, bank_code=$7, account_name=$8,
             verification_status='pending', updated_at=NOW()
         WHERE user_id=$9
-      `, [nin, agency_name||null, bio||null, id_document_url, selfie_url,
-          req.body.account_number||null, req.body.bank_code||null,
-          req.body.account_name||null, req.user.id]);
+      `, [nin, agency_name || null, bio || null, id_document_url, selfie_url,
+        req.body.account_number || null, req.body.bank_code || null,
+        req.body.account_name || null, req.user.id]);
 
       // Get agent user details
       const userRes = await pool.query(
@@ -145,11 +145,11 @@ const agentController = {
         let recipientCode = null;
         try {
           const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
-            type:           'nuban',
-            name:           req.body.account_name || agent.full_name,
+            type: 'nuban',
+            name: req.body.account_name || agent.full_name,
             account_number: req.body.account_number,
-            bank_code:      req.body.bank_code,
-            currency:       'NGN',
+            bank_code: req.body.bank_code,
+            currency: 'NGN',
           }, {
             headers: {
               Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
@@ -245,7 +245,7 @@ const agentController = {
               <p>We were unable to verify your identity automatically. ${dojahResult.reason}</p>
               <p>Please ensure your selfie clearly shows your face and your ID document is legible.
               You may resubmit at any time. If you believe this is an error, contact us at
-              legal@southswift.com.ng.</p>
+              ceo@southswift.com.ng.</p>
             `,
           });
           return res.status(400).json({
@@ -354,10 +354,10 @@ const adminController = {
                     WHERE has_paid_inspection IS TRUE`),
       ]);
       res.json({
-        total_users:       parseInt(users.rows[0].count),
-        total_listings:    parseInt(listings.rows[0].count),
-        completed_deals:   parseInt(deals.rows[0].count),
-        verified_agents:   parseInt(agents.rows[0].count),
+        total_users: parseInt(users.rows[0].count),
+        total_listings: parseInt(listings.rows[0].count),
+        completed_deals: parseInt(deals.rows[0].count),
+        verified_agents: parseInt(agents.rows[0].count),
         total_revenue_ngn: parseInt(revenue.rows[0].total),
         inspection_revenue_ngn: parseInt(inspectionRevenue.rows[0].total),
       });
@@ -382,7 +382,7 @@ const adminController = {
   // PUT /api/admin/agents/:userId/verify
   verifyAgent: async (req, res) => {
     const { action } = req.body; // 'verify' or 'reject'
-    if (!['verify','reject'].includes(action))
+    if (!['verify', 'reject'].includes(action))
       return res.status(400).json({ error: 'Action must be verify or reject.' });
     try {
       const status = action === 'verify' ? 'verified' : 'rejected';
@@ -390,7 +390,7 @@ const adminController = {
         UPDATE agent_profiles
         SET verification_status=$1, verified_at=$2, verified_by=$3
         WHERE user_id=$4
-      `, [status, action==='verify'?new Date():null, req.user.id, req.params.userId]);
+      `, [status, action === 'verify' ? new Date() : null, req.user.id, req.params.userId]);
 
       if (action === 'verify') {
         await pool.query("UPDATE users SET is_verified=true WHERE id=$1", [req.params.userId]);
@@ -481,11 +481,11 @@ const adminController = {
 
         if (!recipientCode) {
           const recipRes = await axios.post('https://api.paystack.co/transferrecipient', {
-            type:           'nuban',
-            name:           deal.account_name || deal.agent_full_name,
+            type: 'nuban',
+            name: deal.account_name || deal.agent_full_name,
             account_number: deal.account_number,
-            bank_code:      deal.bank_code,
-            currency:       'NGN',
+            bank_code: deal.bank_code,
+            currency: 'NGN',
           }, { headers: paystackHeaders });
 
           recipientCode = recipRes.data.data.recipient_code;
@@ -497,10 +497,10 @@ const adminController = {
         }
 
         const transferRes = await axios.post('https://api.paystack.co/transfer', {
-          source:    'balance',
-          amount:    transferAmount,
+          source: 'balance',
+          amount: transferAmount,
           recipient: recipientCode,
-          reason:    `SouthSwift Deal ${deal.id.slice(0,8)} — Property Rental`,
+          reason: `SouthSwift Deal ${deal.id.slice(0, 8)} — Property Rental`,
           reference: `SS-RELEASE-${deal.id}`,
         }, { headers: paystackHeaders });
 
@@ -526,12 +526,12 @@ const adminController = {
           const settledStatus = verify.data?.data?.status;
           // Paystack states: 'pending' | 'success' | 'failed' | 'reversed'
           // Anything except 'failed'/'reversed' means the transfer is live on their side.
-          if (settledStatus && !['failed','reversed'].includes(settledStatus)) {
+          if (settledStatus && !['failed', 'reversed'].includes(settledStatus)) {
             alreadySettled = true;
             await pool.query(
               "UPDATE deals SET status='completed', notes=$1 WHERE id=$2",
               [`Paystack transfer (recovered ${settledStatus}): ${transferReference}`, req.params.id]
-            ).catch(() => {});
+            ).catch(() => { });
           }
         } catch (verifyErr) {
           // 404 from /transfer/verify means Paystack never received the transfer — safe to retry.
@@ -551,7 +551,7 @@ const adminController = {
         await pool.query(
           "UPDATE deals SET funds_released_at=NULL, updated_at=NOW() WHERE id=$1",
           [req.params.id]
-        ).catch(() => {});
+        ).catch(() => { });
         console.error('Fund transfer failed (verified no-send, lock released for retry):', transferErr.response?.data || transferErr.message);
         return res.status(502).json({ error: 'Paystack transfer failed. No funds were sent — you can retry.' });
       }
@@ -579,7 +579,7 @@ const adminController = {
         return res.status(400).json({ error: 'This deal has already been refunded.' });
       if (!deal.paystack_reference)
         return res.status(400).json({ error: 'No payment reference on this deal — nothing to refund.' });
-      if (!['escrow_held','docs_generated','movein_pending','disputed'].includes(deal.status))
+      if (!['escrow_held', 'docs_generated', 'movein_pending', 'disputed'].includes(deal.status))
         return res.status(400).json({ error: `Cannot refund a deal in status: ${deal.status}` });
 
       // Atomically claim the refund (and re-assert funds not released) to prevent double-refund.
@@ -618,7 +618,7 @@ const adminController = {
         await pool.query(
           "UPDATE deals SET refunded_at=NULL, updated_at=NOW() WHERE id=$1",
           [req.params.id]
-        ).catch(() => {});
+        ).catch(() => { });
         console.error('Refund failed (claim released for retry):', refundErr.response?.data || refundErr.message);
         return res.status(502).json({ error: 'Paystack refund failed. No refund was made — you can retry.' });
       }
@@ -633,7 +633,7 @@ const adminController = {
     const { resolution, winner } = req.body;
     if (!resolution || !winner)
       return res.status(400).json({ error: 'resolution text and winner required.' });
-    if (!['tenant','agent','split'].includes(winner))
+    if (!['tenant', 'agent', 'split'].includes(winner))
       return res.status(400).json({ error: 'winner must be tenant, agent, or split.' });
 
     try {
@@ -663,29 +663,29 @@ const adminController = {
 
       const { sendEmail } = require('./emailController');
       const tenantRes = await pool.query('SELECT email, full_name FROM users WHERE id=$1', [deal.tenant_id]);
-      const agentRes  = await pool.query('SELECT email, full_name FROM users WHERE id=$1', [deal.agent_id]);
+      const agentRes = await pool.query('SELECT email, full_name FROM users WHERE id=$1', [deal.agent_id]);
       const tenant = tenantRes.rows[0]; const agent = agentRes.rows[0];
 
       const winnerLabel = winner === 'tenant' ? 'Funds will be refunded to the tenant.'
         : winner === 'agent' ? 'Funds will be released to the agent.'
-        : 'A split resolution will be processed.';
+          : 'A split resolution will be processed.';
 
       await sendEmail({
         to: tenant.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${escapeHtml(tenant.full_name)}, your dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
+        html: `<p>Dear ${escapeHtml(tenant.full_name)}, your dispute for deal ${deal.id.slice(0, 8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
       });
       await sendEmail({
         to: agent.email,
         subject: '🛡️ SouthSwift — Dispute Resolved',
-        html: `<p>Dear ${escapeHtml(agent.full_name)}, the dispute for deal ${deal.id.slice(0,8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
+        html: `<p>Dear ${escapeHtml(agent.full_name)}, the dispute for deal ${deal.id.slice(0, 8)} has been resolved.</p><p><strong>Resolution:</strong> ${escapeHtml(resolution)}</p><p>${winnerLabel}</p>`,
       });
 
       // Alert admin for manual fund routing
       await sendEmail({
         to: 'ceo@southswift.com.ng',
         subject: `💰 ADMIN: Dispute Resolved — ${winner} wins — Action Required`,
-        html: `<p>Deal ${deal.id.slice(0,8)} dispute resolved. Winner: <strong>${winner}</strong>.</p><p>${winnerLabel}</p><p>Amount: ₦${Number(deal.rent_amount).toLocaleString()}</p>`,
+        html: `<p>Deal ${deal.id.slice(0, 8)} dispute resolved. Winner: <strong>${winner}</strong>.</p><p>${winnerLabel}</p><p>Amount: ₦${Number(deal.rent_amount).toLocaleString()}</p>`,
       });
 
       res.json({ message: 'Dispute resolved and parties notified.' });
@@ -760,7 +760,7 @@ const adminController = {
       });
     } catch (err) {
       console.error('Bulk delete error:', err.code || '', err.message);
-      res.status(500).json({ error: `Bulk delete failed: ${String(err.message || '').split('\n')[0].slice(0,200)}` });
+      res.status(500).json({ error: `Bulk delete failed: ${String(err.message || '').split('\n')[0].slice(0, 200)}` });
     }
   },
 
@@ -841,7 +841,7 @@ const adminController = {
         };
         listing = { address: '1 Test Street', city: 'Lagos', state: 'Lagos', property_type: 'apartment', bedrooms: 2, bathrooms: 2, rent_period: 'yearly' };
         tenant = { full_name: 'Test Tenant', phone: '+2348011111111', email: testEmail };
-        agent  = { full_name: 'Test Agent', agency_name: 'Test Agency', phone: '+2348022222222', email: testEmail };
+        agent = { full_name: 'Test Agent', agency_name: 'Test Agency', phone: '+2348022222222', email: testEmail };
       }
 
       const result = await generateSwiftDoc({ deal, listing, tenant, agent });
