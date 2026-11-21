@@ -30,8 +30,8 @@ function LegalPage({ title, version, children }) {
           <div style={s.sideCard}>
             <div style={s.sideTitle}>Contact</div>
             <p style={{ fontSize: 12, color: '#666', lineHeight: 1.6, margin: '0 0 8px' }}>Legal enquiries:</p>
-            <a href="mailto:legal@southswift.com.ng" style={s.contactBtn}>legal@southswift.com.ng</a>
-            <a href="mailto:ceo@southswift.com.ng" style={{ ...s.contactBtn, marginTop: 6 }}>ceo@southswift.com.ng</a>
+            <a href="mailto:ceo@southswift.com.ng" style={s.contactBtn}>ceo@southswift.com.ng</a>
+        
             <a href="tel:+2348168185692" style={{ ...s.contactBtn, marginTop: 6 }}>+234 816 818 5692</a>
           </div>
         </div>
@@ -176,7 +176,7 @@ export function PrivacyPolicy() {
           'Request a copy of your SwiftDoc tenancy agreements',
           'Object to processing of your data for purposes beyond those described in this policy',
         ]} />
-        <P>To exercise any of these rights, contact us at legal@southswift.com.ng. We will respond within 30 days.</P>
+        <P>To exercise any of these rights, contact us at ceo@southswift.com.ng. We will respond within 30 days.</P>
       </Sec>
 
       <Sec title="10. Authentication and Session Storage">
@@ -184,7 +184,7 @@ export function PrivacyPolicy() {
       </Sec>
 
       <Sec title="11. Children">
-        <P>SouthSwift is not intended for users under the age of 18. We do not knowingly collect personal data from minors. If you believe a minor has registered, contact us immediately at legal@southswift.com.ng and we will promptly delete the account and all associated data.</P>
+        <P>SouthSwift is not intended for users under the age of 18. We do not knowingly collect personal data from minors. If you believe a minor has registered, contact us immediately at ceo@southswift.com.ng and we will promptly delete the account and all associated data.</P>
       </Sec>
 
       <Sec title="12. Changes to This Policy">
@@ -192,8 +192,8 @@ export function PrivacyPolicy() {
       </Sec>
 
       <Sec title="13. Contact">
-        <P>Privacy questions and data rights: legal@southswift.com.ng</P>
-        <P>Disputes and escrow: disputes@southswift.com.ng</P>
+        <P>Privacy questions and data rights: ceo@southswift.com.ng</P>
+        <P>Disputes and escrow: ceo@southswift.com.ng</P>
         <P>General enquiries: ceo@southswift.com.ng · +234 816 818 5692</P>
         <P>SouthSwift Enterprise · CAC BN 7310264 · Federal Republic of Nigeria</P>
       </Sec>
@@ -220,7 +220,7 @@ export function TermsOfService() {
         <Ul items={[
           'Provide accurate, truthful, and complete information during registration',
           'Keep your password confidential and not share your account with any other person',
-          'Notify us immediately at legal@southswift.com.ng of any unauthorised use of your account',
+          'Notify us immediately at ceo@southswift.com.ng of any unauthorised use of your account',
           'Be at least 18 years of age at the time of registration',
           'Not create multiple accounts or impersonate another person or entity',
         ]} />
@@ -314,8 +314,8 @@ export function TermsOfService() {
 
       <Sec title="14. Contact">
         <P>General enquiries: ceo@southswift.com.ng</P>
-        <P>Legal and compliance: legal@southswift.com.ng</P>
-        <P>Disputes: disputes@southswift.com.ng</P>
+        <P>Legal and compliance: ceo@southswift.com.ng</P>
+        <P>Disputes: ceo@southswift.com.ng</P>
         <P>Phone: +234 816 818 5692</P>
         <P>SouthSwift Enterprise · CAC BN 7310264 · Federal Republic of Nigeria</P>
       </Sec>
@@ -433,7 +433,7 @@ export function EscrowPolicy() {
 
       <Sec title="10. Contact">
         <P>For urgent disputes: +234 816 818 5692</P>
-        <P>For legal enquiries: legal@southswift.com.ng</P>
+        <P>For legal enquiries: ceo@southswift.com.ng</P>
         <P>SouthSwift Enterprise · CAC BN 7310264 · southswift.com.ng</P>
       </Sec>
       <Note>This Escrow Policy was last reviewed and updated in May 2026. Version 1.1. By initiating a SwiftShield deal you confirm you have read and accepted this policy in full.</Note>
